@@ -26,5 +26,34 @@
     <p>世界各国で生成AIの倫理や法整備に関する議論が進んでいます。EUではAI規制法案が検討され、日本でもガイドライン策定が行われています。</p>
   </article>
   <p style="font-size:0.9em; color:#666;">※本ページの内容は2023年時点の情報を基に作成されており、最新の状況とは異なる場合があります。</p>
+
+  <hr>
+  <h2>日付入力で昨日の国内小売ニュースを表示</h2>
+  <p>日付を選択すると、その前日に関する小売業のニュースを表示します。</p>
+  <input type="date" id="dateInput">
+  <button onclick="showRetailNews()">検索</button>
+  <p id="newsOutput" style="margin-top:12px;"></p>
+
+  <script>
+    const newsData = {
+      "2023-09-01": "コンビニチェーンが新たな無人レジシステムを導入。",
+      "2023-09-02": "大手スーパーがポイント還元キャンペーンを開始。",
+      "2023-09-03": "百貨店各社、秋のセールを前倒し実施。"
+    };
+
+    function showRetailNews() {
+      const input = document.getElementById('dateInput').value;
+      if (!input) {
+        document.getElementById('newsOutput').textContent = '';
+        return;
+      }
+      const d = new Date(input);
+      d.setDate(d.getDate() - 1);
+      const prev = d.toISOString().split('T')[0];
+      const news = newsData[prev];
+      document.getElementById('newsOutput').textContent =
+        news ? `${prev} のニュース: ${news}` : '指定された日の前日のニュースは見つかりませんでした。';
+    }
+  </script>
 </body>
 </html>
