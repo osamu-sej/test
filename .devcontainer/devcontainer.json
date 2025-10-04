@@ -1,0 +1,8 @@
+{
+  "name": "FastAPI TODO",
+  "build": {
+    "dockerfile": "../Dockerfile"
+  },
+  "forwardPorts": [8000],
+  "postCreateCommand": "pip install -r requirements.txt"
+}
