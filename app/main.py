@@ -31,7 +31,6 @@ class NewsScraper:
             "Connection": "keep-alive"
         })
 
-    # エラー時のデータ作成
     def _fallback_item(self, company, target_date_str, status_code=None):
         if status_code == 403:
             title = "🔒 公式サイトで最新ニュースを確認する"
@@ -328,6 +327,7 @@ def generate_sidebar_html(selected_ids):
 @app.get("/", response_class=HTMLResponse)
 async def read_root(date: str = Query(None), companies: list[str] = Query(None)):
     today = datetime.now()
+    # 初期状態は全選択
     selected_ids = companies if companies else [c["id"] for c in COMPANIES]
     
     target_date_str = date if date else today.strftime("%Y-%m-%d")
@@ -679,7 +679,7 @@ async def read_root(date: str = Query(None), companies: list[str] = Query(None))
                 Object.keys(cache).forEach(dateKey => {{
                     if (dateKey.startsWith(currentMonthPrefix)) {{
                         cache[dateKey].forEach(item => {{
-                            // ★ 修正点: リンクのみ(1行表示)やエラーのものはカウントしない
+                            // ★ リンクのみ(1行表示)やエラーのものはカウントしない
                             if (item.is_link_only || item.is_error) return;
 
                             const name = item.company_name;
