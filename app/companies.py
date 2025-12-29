@@ -1,14 +1,12 @@
 COMPANIES = [
-    # --- グループ ---
+     # --- コンビニ ---
     {
-        "id": "seven_hd", "name": "セブン&アイ・HD", "category": "グループ",
+        "id": "seven_hd", "name": "セブン&アイ・HD", "category": "コンビニ",
         "url": "https://www.7andi.com/company/news/index.html", 
         "scraper_type": "auto",
         "badge_color": "#EA5514",
         "date_format": "%Y年%m月%d日"
     },
-
-    # --- コンビニ ---
     {
         "id": "seven", "name": "セブン-イレブン", "category": "コンビニ",
         "url": "https://www.sej.co.jp/company/news_release/news/2025.html", # 【修正】スクショ通りの年別ページへ
@@ -214,5 +212,41 @@ COMPANIES = [
         "scraper_type": "auto",
         "badge_color": "#006400",
         "date_format": "%Y.%m.%d"
-    }
+    },  
+    # --- 追加: 冷凍食品メーカー (URLスクショ反映版) ---
+    {
+        "id": "nichirei", "name": "ニチレイフーズ", "category": "冷凍食品",
+        "url": "https://www.nichirei.co.jp/news/2025/foods.html",
+        "scraper_type": "auto",
+        "badge_color": "#E60012",
+        "date_format": "%Y.%m.%d"
+    },
+    {
+        "id": "nissui", "name": "ニッスイ", "category": "冷凍食品",
+        "url": "https://www.nissui.co.jp/news/index.html",
+        "scraper_type": "auto",
+        "badge_color": "#004DA0",
+        "date_format": "%Y.%m.%d"
+    },
+    {
+        "id": "ajinomoto_frozen", "name": "味の素冷凍食品", "category": "冷凍食品",
+        "url": "https://news.ajinomoto.co.jp/", 
+        "scraper_type": "auto",   # 【修正】force_linkからautoへ戻しました
+        "badge_color": "#EA5514",
+        "date_format": "%Y年%m月%d日"
+    },
+    {
+        "id": "maruha", "name": "マルハニチロ", "category": "冷凍食品",
+        "url": "https://www.maruha-nichiro.co.jp/corporate/news_center/news_topics/",
+        "scraper_type": "auto",
+        "badge_color": "#0067C0",
+        "date_format": "%Y.%m.%d"
+    },
+    {
+        "id": "tablemark", "name": "テーブルマーク", "category": "冷凍食品",
+        "url": "https://www.tablemark.co.jp/corp/ir.html",
+        "scraper_type": "auto",
+        "badge_color": "#E60012",
+        "date_format": "%Y.%m.%d"
+    },
 ]

@@ -3,7 +3,10 @@ import re
 import unicodedata
 from datetime import datetime, timedelta
 from urllib.parse import urljoin, urlparse, urlunparse
+import time
 
+# curl_cffi がインストールされている前提
+from curl_cffi import requests as cffi_requests
 import requests
 from bs4 import BeautifulSoup
 from fastapi import FastAPI, Query
@@ -16,65 +19,115 @@ app = FastAPI(title="Retail News Scout")
 
 # ==========================================
 #  スクレイピングロジック (NewsScraper)
-#  【変更なし：今のロジックで正解です】
 # ==========================================
 class NewsScraper:
     def __init__(self) -> None:
         self.session = requests.Session()
         self.session.headers.update({
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
             "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
-            "Accept-Encoding": "gzip, deflate, br",
             "Referer": "https://www.google.com/",
             "Connection": "keep-alive"
         })
 
+    # エラー時のデータ作成
     def _fallback_item(self, company, target_date_str, status_code=None):
-        title = "【アクセス制限中】公式サイトを直接開く"
-        if status_code == 404:
-            title = "【エラー】URLが無効です(404)"
-        elif status_code and status_code != 403:
-            title = f"【エラー】公式サイトを開く (Status {status_code})"
+        if status_code == 403:
+            title = "🔒 公式サイトで最新ニュースを確認する"
+            badge_color = "#3b82f6" 
+            is_link_only = True
+        elif status_code == 404:
+            title = "【404】ページが見つかりません"
+            badge_color = company["badge_color"]
+            is_link_only = False
+        else:
+            code_str = f" ({status_code})" if status_code else ""
+            title = f"【エラー】公式サイトを開く{code_str}"
+            badge_color = company["badge_color"]
+            is_link_only = True
+        
         return {
             "company_name": company["name"],
-            "badge_color": company["badge_color"],
+            "badge_color": badge_color,
             "title": title,
             "url": company["url"],
             "date": target_date_str,
+            "is_link_only": is_link_only, 
+            "is_error": True if status_code != 403 else False
         }
+
+    def fetch_with_cffi(self, url):
+        try:
+            response = cffi_requests.get(
+                url, 
+                impersonate="safari15_5", 
+                headers={
+                    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.5 Safari/605.1.15",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Accept-Language": "ja-JP,ja;q=0.9"
+                },
+                timeout=20
+            )
+            if response.status_code == 200:
+                return response.text, 200
+            return None, response.status_code
+        except Exception as e:
+            print(f"CFFI Error: {e}")
+            return None, 500
 
     def fetch_news(self, company_ids, target_date_str):
         target_date = datetime.strptime(target_date_str, "%Y-%m-%d")
         all_items = []
         debug_logs = []
+        
+        checked_company_names = []
 
         for cid in company_ids:
             company = next((c for c in COMPANIES if c["id"] == cid), None)
             if not company: continue
-
+            
+            checked_company_names.append(company["name"])
             debug_logs.append(f"--- Checking {company['name']} ---")
 
             if company.get("scraper_type") == "force_link":
                 all_items.append({
                     "company_name": company["name"],
-                    "badge_color": company["badge_color"],
-                    "title": "【確認用】公式サイトで最新ニュースを見る",
+                    "badge_color": "#3b82f6",
+                    "title": "👉 公式サイトで最新ニュースを見る",
                     "url": company["url"],
                     "date": target_date_str,
+                    "is_link_only": True,
+                    "is_error": False
                 })
                 continue
 
+            html_content = None
+            
             try:
-                resp = self.session.get(company["url"], timeout=30.0)
+                resp = self.session.get(company["url"], timeout=20.0)
                 resp.encoding = resp.apparent_encoding
                 
-                if resp.status_code != 200:
+                if resp.status_code == 403:
+                    debug_logs.append("Status 403 detected. Launching 'curl_cffi'...")
+                    cffi_html, cffi_status = self.fetch_with_cffi(company["url"])
+                    
+                    if cffi_html:
+                        debug_logs.append(" -> curl_cffi success!")
+                        html_content = cffi_html
+                    else:
+                        debug_logs.append(f" -> curl_cffi failed ({cffi_status}).")
+                        all_items.append(self._fallback_item(company, target_date_str, 403))
+                        continue
+
+                elif resp.status_code != 200:
                     debug_logs.append(f"Error Status: {resp.status_code}")
                     all_items.append(self._fallback_item(company, target_date_str, resp.status_code))
                     continue
-                    
-                soup = BeautifulSoup(resp.text, "html.parser")
+                else:
+                    html_content = resp.text
+
+                soup = BeautifulSoup(html_content, "html.parser")
                 
             except Exception as exc:
                 debug_logs.append(f"Exception: {exc}")
@@ -83,7 +136,7 @@ class NewsScraper:
 
             found_count = 0
             
-            # --- ライフ専用ロジック (URL統合 & ベストタイトル採用) ---
+            # --- ライフ専用ロジック ---
             if company["id"] == "life":
                 life_dates = soup.find_all(string=re.compile(r"20\d{2}/\d{1,2}/\d{1,2}"))
                 candidates_map = {} 
@@ -110,12 +163,10 @@ class NewsScraper:
                             
                             if not link_node or not card_node: continue
 
-                            # URL正規化
                             raw_url = urljoin(company["url"], link_node['href'])
                             parsed = urlparse(raw_url)
                             clean_url = urlunparse((parsed.scheme, parsed.netloc, parsed.path, '', '', ''))
 
-                            # タイトル候補抽出
                             title_candidates = []
                             img = card_node.find('img', alt=True)
                             if img and len(img['alt'].strip()) > 1:
@@ -145,7 +196,9 @@ class NewsScraper:
                                     "badge_color": company["badge_color"],
                                     "title": best_title,
                                     "url": clean_url,
-                                    "date": found_date_str
+                                    "date": found_date_str,
+                                    "is_link_only": False,
+                                    "is_error": False
                                 }
                             else:
                                 if len(best_title) > len(candidates_map[clean_url]["title"]):
@@ -160,14 +213,15 @@ class NewsScraper:
                     found_count += 1
                     debug_logs.append(f"  -> Found (Life Best): {item['title'][:15]}...")
 
-            # --- 汎用ロジック (他社用) ---
+            # --- 汎用ロジック ---
             if found_count == 0:
-                target_tags = soup.find_all(['dt', 'dd', 'li', 'div', 'p', 'span', 'time', 'td'])
+                target_tags = soup.find_all(['dt', 'dd', 'li', 'div', 'p', 'span', 'time', 'td', 'tr'])
                 processed_urls = set()
 
                 for element in target_tags:
                     full_text = unicodedata.normalize("NFKC", element.get_text(" ", strip=True))
                     if len(full_text) > 500: continue 
+                    
                     match = re.search(r"(\d{4})\s*[./年]\s*(\d{1,2})\s*[./月]\s*(\d{1,2})", full_text)
                     if not match: continue
                     y, m, d = match.groups()
@@ -178,13 +232,16 @@ class NewsScraper:
 
                         debug_logs.append(f"★ MATCH: {found_date_str} in <{element.name}>")
                         link_tag = None
+                        
                         dt_node = None
                         if element.name == 'dt': dt_node = element
                         elif element.parent and element.parent.name == 'dt': dt_node = element.parent
                         if dt_node:
                             dd_node = dt_node.find_next_sibling('dd')
                             if dd_node: link_tag = dd_node.find('a', href=True)
+                        
                         if not link_tag: link_tag = element.find('a', href=True)
+                        
                         if not link_tag:
                             curr = element
                             for _ in range(5):
@@ -199,18 +256,26 @@ class NewsScraper:
                                         link_tag = max(valid, key=lambda l: len(l.get_text(strip=True)))
                                         break
                                 curr = curr.parent
+                        
                         if not link_tag: link_tag = element.find_next("a", href=True)
 
                         if link_tag and link_tag.get("href"):
                             title = link_tag.get_text(strip=True)
                             url = urljoin(company["url"], link_tag["href"])
+                            
+                            if not title or len(title) < 5:
+                                parent_text = element.get_text(" ", strip=True)
+                                title = parent_text if len(parent_text) > 5 else "ニュース詳細"
+
                             if url not in processed_urls:
                                 all_items.append({
                                     "company_name": company["name"],
                                     "badge_color": company["badge_color"],
-                                    "title": title,
+                                    "title": title[:100] + "..." if len(title) > 100 else title,
                                     "url": url,
                                     "date": found_date_str,
+                                    "is_link_only": False,
+                                    "is_error": False
                                 })
                                 processed_urls.add(url)
                                 found_count += 1
@@ -220,7 +285,7 @@ class NewsScraper:
             if found_count == 0:
                 debug_logs.append("Result: 0 items found.")
 
-        return all_items, debug_logs
+        return all_items, debug_logs, checked_company_names
 
 # ==========================================
 #  UI生成ロジック
@@ -233,11 +298,15 @@ def generate_sidebar_html(selected_ids):
     html = ""
     for cat, companies in categories.items():
         cat_id = f"cat_{cat}"
+        
+        is_category_all_selected = all(comp["id"] in selected_ids for comp in companies)
+        parent_checked = "checked" if is_category_all_selected else ""
+
         html += f"""
         <details class="mb-3 bg-white rounded-xl shadow-sm overflow-hidden">
             <summary class="p-3 bg-slate-50 font-bold cursor-pointer hover:bg-slate-100 flex justify-between items-center select-none transition-colors">
                 <div class="flex items-center">
-                    <input type="checkbox" onclick="event.stopPropagation()" onchange="toggleCategory(this, '{cat_id}')" class="mr-3 h-4 w-4 rounded text-blue-600 focus:ring-blue-500 cursor-pointer">
+                    <input type="checkbox" {parent_checked} onclick="event.stopPropagation()" onchange="toggleCategory(this, '{cat_id}')" class="mr-3 h-4 w-4 rounded text-blue-600 focus:ring-blue-500 cursor-pointer">
                     <span class="text-slate-700">{cat}</span>
                 </div>
                 <i class="fas fa-chevron-down text-xs text-slate-400"></i>
@@ -259,15 +328,17 @@ def generate_sidebar_html(selected_ids):
 @app.get("/", response_class=HTMLResponse)
 async def read_root(date: str = Query(None), companies: list[str] = Query(None)):
     today = datetime.now()
-    yesterday = today - timedelta(days=1)
+    selected_ids = companies if companies else [c["id"] for c in COMPANIES]
+    
     target_date_str = date if date else today.strftime("%Y-%m-%d")
-    selected_ids = companies if companies else []
 
-    items, logs = NewsScraper().fetch_news(selected_ids, target_date_str)
+    items, logs, checked_names = NewsScraper().fetch_news(selected_ids, target_date_str)
+    
     sidebar_html = generate_sidebar_html(selected_ids)
-
     items_json = json.dumps(items, ensure_ascii=False)
+    checked_names_json = json.dumps(checked_names, ensure_ascii=False)
     logs_html = "<br>".join(logs)
+    
     debug_section = f"""
     <div class="mt-16 pt-6 border-t border-slate-200">
         <details class="bg-slate-800 text-green-300 p-5 rounded-xl text-xs font-mono shadow-inner">
@@ -330,6 +401,20 @@ async def read_root(date: str = Query(None), companies: list[str] = Query(None))
                 return data ? JSON.parse(data) : {{}};
             }}
 
+            function shiftDate(amount) {{
+                const input = document.getElementById('dateInput');
+                if(!input.value) return;
+                const parts = input.value.split('-');
+                const d = new Date(parts[0], parts[1] - 1, parts[2]);
+                d.setDate(d.getDate() + amount);
+                
+                const y = d.getFullYear();
+                const m = String(d.getMonth() + 1).padStart(2, '0');
+                const day = String(d.getDate()).padStart(2, '0');
+                input.value = `${{y}}-${{m}}-${{day}}`;
+                renderFromCacheOnly(input.value);
+            }}
+
             document.addEventListener('DOMContentLoaded', function() {{
                 const form = document.querySelector('form');
                 const loader = document.getElementById('loading-overlay');
@@ -344,9 +429,10 @@ async def read_root(date: str = Query(None), companies: list[str] = Query(None))
                 }}
                 
                 const SERVER_RESULTS = {items_json}; 
+                const CHECKED_NAMES = {checked_names_json}; 
                 const CURRENT_DATE = "{target_date_str}";
                 
-                updateCacheAndRender(CURRENT_DATE, SERVER_RESULTS);
+                updateCacheAndRender(CURRENT_DATE, SERVER_RESULTS, CHECKED_NAMES);
 
                 dateInput.addEventListener('change', function(e) {{
                     const newDate = e.target.value;
@@ -364,31 +450,25 @@ async def read_root(date: str = Query(None), companies: list[str] = Query(None))
                 renderFromCacheOnly(dateStr);
             }}
 
-            // 【重要】新しいデータが来たら、その会社の古いデータを削除して入れ替える
-            function updateCacheAndRender(dateKey, newItems) {{
+            function updateCacheAndRender(dateKey, newItems, checkedNames) {{
                 let cache = getCache();
                 let dateItems = cache[dateKey] || [];
                 
+                if (checkedNames && checkedNames.length > 0) {{
+                    const checkedSet = new Set(checkedNames);
+                    dateItems = dateItems.filter(item => !checkedSet.has(item.company_name));
+                }}
+
                 if (newItems && newItems.length > 0) {{
-                    // 1. 今回取得した企業名のリストを作成
-                    const updatedCompanyNames = new Set(newItems.map(item => item.company_name));
-                    
-                    // 2. キャッシュから、今回取得した企業の古いデータを「すべて」削除する
-                    // これで「ライフ」の古い重複データなどが消えます
-                    dateItems = dateItems.filter(item => !updatedCompanyNames.has(item.company_name));
-                    
-                    // 3. 新しいデータを追加する
                     newItems.forEach(item => {{
-                        // 万が一、新データ内での重複チェック
                         if (!dateItems.some(saved => saved.url === item.url)) {{
                             dateItems.push(item);
                         }}
                     }});
-                    
-                    // 保存
-                    cache[dateKey] = dateItems;
-                    localStorage.setItem(STORAGE_KEY, JSON.stringify(cache));
                 }}
+                
+                cache[dateKey] = dateItems;
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(cache));
                 renderGrid(dateItems, dateKey);
             }}
 
@@ -441,7 +521,6 @@ async def read_root(date: str = Query(None), companies: list[str] = Query(None))
                                 itemsToDisplay = itemsToDisplay.concat(cache[key]);
                             }}
                         }});
-                        
                         const seen = new Set();
                         itemsToDisplay = itemsToDisplay.filter(item => {{
                             if (seen.has(item.url)) return false;
@@ -449,7 +528,6 @@ async def read_root(date: str = Query(None), companies: list[str] = Query(None))
                             return true;
                         }});
                         itemsToDisplay.sort((a, b) => new Date(b.date) - new Date(a.date));
-                        
                         document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));
                     }} else {{
                         itemsToDisplay = cache[dateKey] || [];
@@ -462,7 +540,6 @@ async def read_root(date: str = Query(None), companies: list[str] = Query(None))
                     document.getElementById('btn-' + value).classList.add('active');
                     itemsToDisplay = cache[dateKey] || [];
                 }}
-                
                 renderGrid(itemsToDisplay, dateKey);
             }}
 
@@ -484,7 +561,8 @@ async def read_root(date: str = Query(None), companies: list[str] = Query(None))
             }}
 
             function renderGrid(items, displayDate) {{
-                const container = document.getElementById('result-grid');
+                const gridContainer = document.getElementById('result-grid');
+                const linkContainer = document.getElementById('link-only-container');
                 const countBadge = document.getElementById('result-count');
                 const emptyMsg = document.getElementById('empty-message');
                 const dateDisplay = document.getElementById('display-date-str');
@@ -498,7 +576,8 @@ async def read_root(date: str = Query(None), companies: list[str] = Query(None))
                 const filteredItems = items.filter(item => checkFilter(item.title));
 
                 if (!filteredItems || filteredItems.length === 0) {{
-                    container.innerHTML = '';
+                    gridContainer.innerHTML = '';
+                    linkContainer.innerHTML = '';
                     if (emptyMsg) {{
                         emptyMsg.classList.remove('hidden');
                         const isFiltering = (currentFilterMode === 'search' && currentSearchText) || (currentFilterMode === 'category' && currentCategory !== 'all');
@@ -512,19 +591,25 @@ async def read_root(date: str = Query(None), companies: list[str] = Query(None))
                 if (emptyMsg) emptyMsg.classList.add('hidden');
                 if (countBadge) countBadge.textContent = filteredItems.length + ' items';
                 
-                container.innerHTML = filteredItems.map(item => {{
+                const linkOnlyItems = filteredItems.filter(i => i.is_link_only);
+                const cardItems = filteredItems.filter(i => !i.is_link_only);
+
+                gridContainer.innerHTML = cardItems.map(item => {{
                     let bgClass = "bg-white";
                     let textClass = "text-slate-800";
-                    if (item.title && item.title.includes("【")) {{
+                    if (item.is_error) {{
                         bgClass = "bg-red-50/80";
                         textClass = "text-red-700 font-bold";
                     }}
-                    
+                    if (item.title && item.title.includes("【") && !item.is_error) {{
+                        bgClass = "bg-red-50/80";
+                        textClass = "text-red-700 font-bold";
+                    }}
+
                     let displayTitle = item.title;
                     if (currentFilterMode === 'search' && currentSearchText) {{
                         displayTitle = highlightText(item.title, currentSearchText);
                     }}
-                    
                     return `
                     <div class="relative ${{bgClass}} p-6 rounded-xl shadow-md border-t-4 hover:-translate-y-1 hover:shadow-lg transition-all duration-200 ease-out group flex flex-col h-full news-card" style="border-color: ${{item.badge_color}}">
                         <div class="flex items-center justify-between mb-4">
@@ -545,6 +630,30 @@ async def read_root(date: str = Query(None), companies: list[str] = Query(None))
                         <button onclick="deleteItem('${{item.date}}', '${{item.url}}')" class="absolute top-2 right-2 text-slate-200 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity p-1" title="削除"><i class="fas fa-times-circle"></i></button>
                     </div>`;
                 }}).join('');
+
+                if (linkOnlyItems.length > 0) {{
+                    linkContainer.classList.remove('hidden');
+                    linkContainer.innerHTML = `
+                        <h3 class="col-span-full text-sm font-bold text-slate-500 mb-2 mt-8">
+                            ※直接確認できなかったサイト（公式サイトへ移動）
+                        </h3>
+                    ` + linkOnlyItems.map(item => `
+                        <a href="${{item.url}}" target="_blank" class="flex items-center justify-between p-3 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition-colors group shadow-sm">
+                            <div class="flex items-center overflow-hidden">
+                                <span class="w-2.5 h-2.5 rounded-full bg-blue-500 mr-3 flex-shrink-0"></span>
+                                <span class="font-bold text-blue-700 text-sm mr-3 whitespace-nowrap">${{item.company_name}}</span>
+                                <span class="text-sm text-slate-600 truncate group-hover:text-blue-800">${{item.title}}</span>
+                            </div>
+                            <div class="flex items-center flex-shrink-0 ml-2">
+                                <span class="text-xs text-slate-400 mr-2">${{item.date}}</span>
+                                <i class="fas fa-external-link-alt text-blue-400 group-hover:text-blue-600"></i>
+                            </div>
+                        </a>
+                    `).join('');
+                }} else {{
+                    linkContainer.classList.add('hidden');
+                    linkContainer.innerHTML = '';
+                }}
             }}
 
             function toggleSummary() {{
@@ -570,6 +679,9 @@ async def read_root(date: str = Query(None), companies: list[str] = Query(None))
                 Object.keys(cache).forEach(dateKey => {{
                     if (dateKey.startsWith(currentMonthPrefix)) {{
                         cache[dateKey].forEach(item => {{
+                            // ★ 修正点: リンクのみ(1行表示)やエラーのものはカウントしない
+                            if (item.is_link_only || item.is_error) return;
+
                             const name = item.company_name;
                             if (!companyData[name]) {{
                                 companyData[name] = {{ count: 0, dates: new Set() }};
@@ -680,18 +792,23 @@ async def read_root(date: str = Query(None), companies: list[str] = Query(None))
                     <div>
                         <label class="block text-xs font-black text-slate-400 uppercase tracking-widest mb-3">Target Date</label>
                         <input type="date" id="dateInput" name="date" value="{target_date_str}" class="w-full border-2 border-slate-200 rounded-xl p-3 font-bold text-slate-700 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all shadow-sm mb-3">
-                        <div class="grid grid-cols-2 gap-2">
-                            <button type="button" onclick="setDateAndShow('{today.strftime('%Y-%m-%d')}')" class="py-2 px-3 bg-blue-50 text-blue-600 rounded-lg text-xs font-bold hover:bg-blue-100 transition-colors"><i class="far fa-calendar-check mr-1"></i>Today</button>
-                            <button type="button" onclick="setDateAndShow('{yesterday.strftime('%Y-%m-%d')}')" class="py-2 px-3 bg-slate-50 text-slate-600 rounded-lg text-xs font-bold hover:bg-slate-100 transition-colors"><i class="fas fa-history mr-1"></i>Yesterday</button>
+                        <div class="flex items-center gap-2">
+                            <button type="button" onclick="shiftDate(-1)" class="flex-1 py-2 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 text-slate-600 shadow-sm transition-all active:scale-95"><i class="fas fa-chevron-left"></i></button>
+                            <button type="button" onclick="setDateAndShow('{today.strftime('%Y-%m-%d')}')" class="px-4 py-2 bg-slate-100 text-slate-600 rounded-lg text-xs font-bold hover:bg-slate-200 transition-colors">Today</button>
+                            <button type="button" onclick="shiftDate(1)" class="flex-1 py-2 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 text-slate-600 shadow-sm transition-all active:scale-95"><i class="fas fa-chevron-right"></i></button>
                         </div>
                     </div>
+
+                    <div class="mt-6 mb-2">
+                        <button type="submit" class="w-full bg-slate-800 text-white font-black py-4 rounded-xl shadow-lg hover:bg-slate-700 hover:shadow-xl hover:scale-[1.02] active:scale-95 transition-all duration-200 ease-out flex items-center justify-center">
+                            <i class="fas fa-search mr-2"></i>SEARCH NEWS
+                        </button>
+                    </div>
+
                     <div class="flex-1 overflow-y-auto -mx-2 px-2">
                         <label class="block text-xs font-black text-slate-400 uppercase tracking-widest mb-3 sticky top-0 bg-white py-2 z-10">Categories</label>
                         {sidebar_html}
                     </div>
-                    <button type="submit" class="w-full bg-slate-800 text-white font-black py-4 rounded-xl shadow-lg hover:bg-slate-700 hover:shadow-xl hover:scale-[1.02] active:scale-95 transition-all duration-200 ease-out flex items-center justify-center">
-                        <i class="fas fa-search mr-2"></i>SEARCH NEWS
-                    </button>
                 </form>
             </aside>
             <main class="flex-1 p-10 overflow-y-auto bg-slate-50">
@@ -724,6 +841,8 @@ async def read_root(date: str = Query(None), companies: list[str] = Query(None))
                     </div>
                     
                     <div id="result-grid" class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6"></div>
+                    
+                    <div id="link-only-container" class="mt-8 mb-6 grid grid-cols-1 gap-2 hidden"></div>
                     
                     <div id="empty-message" class="col-span-full text-center py-24 text-slate-400 hidden">
                         <i class="fas fa-search mb-6 text-5xl block opacity-30"></i>
