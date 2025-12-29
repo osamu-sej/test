@@ -2,3 +2,5 @@ fastapi
 uvicorn
 pytest
 httpx
+requests
+beautifulsoup4
