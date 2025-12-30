@@ -4,4 +4,3 @@ pytest
 httpx
 requests
 beautifulsoup4
-curl-cffi
