@@ -4,9 +4,6 @@ import unicodedata
 from datetime import datetime, timedelta
 from urllib.parse import urljoin, urlparse, urlunparse
 import time
-
-# curl_cffi がインストールされている前提
-from curl_cffi import requests as cffi_requests
 import requests
 from bs4 import BeautifulSoup
 from fastapi import FastAPI, Query
@@ -56,25 +53,6 @@ class NewsScraper:
             "is_error": True if status_code != 403 else False
         }
 
-    def fetch_with_cffi(self, url):
-        try:
-            response = cffi_requests.get(
-                url, 
-                impersonate="safari15_5", 
-                headers={
-                    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.5 Safari/605.1.15",
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                    "Accept-Language": "ja-JP,ja;q=0.9"
-                },
-                timeout=20
-            )
-            if response.status_code == 200:
-                return response.text, 200
-            return None, response.status_code
-        except Exception as e:
-            print(f"CFFI Error: {e}")
-            return None, 500
-
     def fetch_news(self, company_ids, target_date_str):
         target_date = datetime.strptime(target_date_str, "%Y-%m-%d")
         all_items = []
@@ -89,6 +67,7 @@ class NewsScraper:
             checked_company_names.append(company["name"])
             debug_logs.append(f"--- Checking {company['name']} ---")
 
+            # 強制リンクモードの企業
             if company.get("scraper_type") == "force_link":
                 all_items.append({
                     "company_name": company["name"],
@@ -104,20 +83,15 @@ class NewsScraper:
             html_content = None
             
             try:
-                resp = self.session.get(company["url"], timeout=20.0)
+                # シンプルなrequestsのみを使用（軽量化）
+                resp = self.session.get(company["url"], timeout=10.0)
                 resp.encoding = resp.apparent_encoding
                 
                 if resp.status_code == 403:
-                    debug_logs.append("Status 403 detected. Launching 'curl_cffi'...")
-                    cffi_html, cffi_status = self.fetch_with_cffi(company["url"])
-                    
-                    if cffi_html:
-                        debug_logs.append(" -> curl_cffi success!")
-                        html_content = cffi_html
-                    else:
-                        debug_logs.append(f" -> curl_cffi failed ({cffi_status}).")
-                        all_items.append(self._fallback_item(company, target_date_str, 403))
-                        continue
+                    # 403の場合は深追いせずリンクのみ表示
+                    debug_logs.append("Status 403 (Access Denied). Fallback to link.")
+                    all_items.append(self._fallback_item(company, target_date_str, 403))
+                    continue
 
                 elif resp.status_code != 200:
                     debug_logs.append(f"Error Status: {resp.status_code}")
