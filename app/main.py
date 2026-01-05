@@ -190,10 +190,14 @@ class NewsScraper:
                     found_count += 1
                     debug_logs.append(f"  -> Found (Life Best): {item['title'][:15]}...")
 
-            # --- セブン＆アイ専用ロジック (全方位探索版) ---
-            elif company["id"] in ["seven_2026", "seven_2025"]:
-                # ★ここを強化！ dt, div, p だけでなく li, dd, td, span も探す「全タグ検索」
+            # --- セブン＆アイ専用ロジック (全方位探索・下から上へ版) ---
+            elif company["id"] in ["seven_2026", "seven_2025", "seven_hd"]:
+                # ユーザーアイデア：下からスクレイピング（reverse）
+                # 親要素（div）が先に見つかって最初のリンクだけ取ってしまうのを防ぐため、
+                # 子要素（dt, dd等）から先に処理するようにリストを反転させます。
                 seven_target_tags = soup.find_all(['dt', 'dd', 'li', 'div', 'p', 'td', 'span'])
+                seven_target_tags.reverse() # ★ここがポイント：リストを逆順にする
+                
                 seven_processed_urls = set()
                 
                 for element in seven_target_tags:
@@ -248,7 +252,7 @@ class NewsScraper:
                                 })
                                 seven_processed_urls.add(url)
                                 found_count += 1
-                                debug_logs.append(f"  -> Found (7&i Strong): {title[:15]}...")
+                                debug_logs.append(f"  -> Found (7&i Reverse): {title[:15]}...")
                 
                 # 専用ロジックで見つからなかった場合のみ、下の汎用ロジックへ流す
                 if found_count > 0:
@@ -271,7 +275,7 @@ class NewsScraper:
                     if found_date_str == target_date_str:
                         # ライフとセブンは専用ロジックで処理済みのはずなのでスキップ
                         if company["id"] == "life": continue 
-                        if company["id"] in ["seven_2026", "seven_2025"]: continue
+                        if company["id"] in ["seven_2026", "seven_2025", "seven_hd"]: continue
 
                         debug_logs.append(f"★ MATCH: {found_date_str} in <{element.name}>")
                         link_tag = None
