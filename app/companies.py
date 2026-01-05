@@ -5,7 +5,7 @@ COMPANIES = [
     {
         "id": "seven_2026", "name": "セブン&アイ・HD(2026)", "category": "コンビニ",
         "url": "https://www.7andi.com/company/news/index.html", 
-        "scraper_type": "force_link",
+        "scraper_type": "auto",
         "badge_color": "#EA5514",
         "date_format": "%Y年%m月%d日"
     },
