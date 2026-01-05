@@ -1,7 +1,6 @@
 # app/companies.py
 
 COMPANIES = [
-    # --- コンビニ ---
     {
         "id": "seven_2026", "name": "セブン&アイ・HD(2026)", "category": "コンビニ",
         "url": "https://www.7andi.com/company/news/2026.html", 
