@@ -4,17 +4,17 @@ COMPANIES = [
     # --- コンビニ ---
     {
         "id": "seven_2026", "name": "セブン&アイ・HD(2026)", "category": "コンビニ",
-        "url": "https://www.7andi.com/company/news/2026.html",
+        "url": "https://www.7andi.com/company/news/index.html", 
         "scraper_type": "auto",
         "badge_color": "#EA5514",
-        "date_format": "%Y.%m.%d"
+        "date_format": "%Y年%m月%d日"
     },
     {
         "id": "seven_2025", "name": "セブン&アイ・HD(2025)", "category": "コンビニ",
         "url": "https://www.7andi.com/company/news/2025.html",
         "scraper_type": "auto",
         "badge_color": "#EA5514",
-        "date_format": "%Y.%m.%d"
+        "date_format": "%Y年%m月%d日"
     },
     {
         "id": "seven", "name": "セブン-イレブン", "category": "コンビニ",
