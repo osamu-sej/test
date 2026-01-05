@@ -3,7 +3,7 @@ COMPANIES = [
     # --- コンビニエンスストア ---
     {
         "id": "seven_2026", "name": "セブン&アイ・HD(2026)", "category": "コンビニ",
-        "url": "https://www.7andi.com/company/news/2026.html", 
+        "url": "https://www.7andi.com/company/news/index.html", 
         "scraper_type": "auto",
         "badge_color": "#EA5514",
         "date_format": "%Y年%m月%d日"
@@ -15,8 +15,16 @@ COMPANIES = [
         "badge_color": "#EA5514",
         "date_format": "%Y年%m月%d日"
     },
+    # 【修正】セブン-イレブンも2026/2025に分割
     {
-        "id": "seven", "name": "セブン-イレブン", "category": "コンビニ",
+        "id": "seven_sej_2026", "name": "セブン-イレブン(2026)", "category": "コンビニ",
+        "url": "https://www.sej.co.jp/company/news_release/news/2026.html",
+        "scraper_type": "auto",
+        "badge_color": "#EA5514",
+        "date_format": "%Y.%m.%d"
+    },
+    {
+        "id": "seven_sej_2025", "name": "セブン-イレブン(2025)", "category": "コンビニ",
         "url": "https://www.sej.co.jp/company/news_release/news/2025.html",
         "scraper_type": "auto",
         "badge_color": "#EA5514",
@@ -193,8 +201,16 @@ COMPANIES = [
         "badge_color": "#DA291C",
         "date_format": "%Y年%m月%d日"
     },
+    # 【修正】ロッテも2026/2025に分割
     {
-        "id": "lotte", "name": "ロッテ", "category": "お菓子",
+        "id": "lotte_2026", "name": "ロッテ(2026)", "category": "お菓子",
+        "url": "https://www.lotte.co.jp/info/news/2026.html",
+        "scraper_type": "auto",
+        "badge_color": "#D70035",
+        "date_format": "%Y.%m.%d"
+    },
+    {
+        "id": "lotte_2025", "name": "ロッテ(2025)", "category": "お菓子",
         "url": "https://www.lotte.co.jp/info/news/2025.html",
         "scraper_type": "auto",
         "badge_color": "#D70035",
@@ -223,8 +239,16 @@ COMPANIES = [
     },
 
     # --- 冷凍食品メーカー ---
+    # 【修正】ニチレイフーズも2026/2025に分割
     {
-        "id": "nichirei", "name": "ニチレイフーズ", "category": "冷凍食品",
+        "id": "nichirei_2026", "name": "ニチレイフーズ(2026)", "category": "冷凍食品",
+        "url": "https://www.nichirei.co.jp/news/2026/foods.html",
+        "scraper_type": "auto",
+        "badge_color": "#E60012",
+        "date_format": "%Y.%m.%d"
+    },
+    {
+        "id": "nichirei_2025", "name": "ニチレイフーズ(2025)", "category": "冷凍食品",
         "url": "https://www.nichirei.co.jp/news/2025/foods.html",
         "scraper_type": "auto",
         "badge_color": "#E60012",
@@ -240,7 +264,7 @@ COMPANIES = [
     {
         "id": "ajinomoto_frozen", "name": "味の素冷凍食品", "category": "冷凍食品",
         "url": "https://news.ajinomoto.co.jp/", 
-        "scraper_type": "auto",   # 【修正】force_linkからautoへ戻しました
+        "scraper_type": "auto",
         "badge_color": "#EA5514",
         "date_format": "%Y年%m月%d日"
     },
