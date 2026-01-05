@@ -1,5 +1,5 @@
 # app/companies.py
-
+# --- コンビニエンスストア ---
 COMPANIES = [
     {
         "id": "seven_2026", "name": "セブン&アイ・HD(2026)", "category": "コンビニ",
