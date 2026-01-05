@@ -190,11 +190,10 @@ class NewsScraper:
                     found_count += 1
                     debug_logs.append(f"  -> Found (Life Best): {item['title'][:15]}...")
 
-            # --- セブン＆アイ専用ロジック (同日複数対応) ---
-            # ここを追加しました！
+            # --- セブン＆アイ専用ロジック (全方位探索版) ---
             elif company["id"] in ["seven_2026", "seven_2025"]:
-                # セブンは <dt>日付</dt> <dd>リンク</dd> の構造が多い
-                seven_target_tags = soup.find_all(['dt', 'div', 'p'])
+                # ★ここを強化！ dt, div, p だけでなく li, dd, td, span も探す「全タグ検索」
+                seven_target_tags = soup.find_all(['dt', 'dd', 'li', 'div', 'p', 'td', 'span'])
                 seven_processed_urls = set()
                 
                 for element in seven_target_tags:
@@ -210,7 +209,7 @@ class NewsScraper:
                     if found_date_str == target_date_str:
                         link_tag = None
                         
-                        # 1. dtタグなら、隣のddを探す
+                        # 1. dtタグなら、隣のddを探す (よくあるパターン)
                         if element.name == 'dt':
                             dd_node = element.find_next_sibling('dd')
                             if dd_node: link_tag = dd_node.find('a', href=True)
@@ -249,7 +248,7 @@ class NewsScraper:
                                 })
                                 seven_processed_urls.add(url)
                                 found_count += 1
-                                debug_logs.append(f"  -> Found (7&i Multi): {title[:15]}...")
+                                debug_logs.append(f"  -> Found (7&i Strong): {title[:15]}...")
                 
                 # 専用ロジックで見つからなかった場合のみ、下の汎用ロジックへ流す
                 if found_count > 0:
