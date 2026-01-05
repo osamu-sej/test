@@ -1,9 +1,8 @@
-# app/companies.py
 COMPANIES = [
     # --- コンビニエンスストア ---
     {
         "id": "seven_2026", "name": "セブン&アイ・HD(2026)", "category": "コンビニ",
-        "url": "https://www.7andi.com/company/news/2026.html", 
+        "url": "https://www.7andi.com/company/news/index.html", 
         "scraper_type": "auto",
         "badge_color": "#EA5514",
         "date_format": "%Y年%m月%d日"
@@ -15,7 +14,7 @@ COMPANIES = [
         "badge_color": "#EA5514",
         "date_format": "%Y年%m月%d日"
     },
-    # 【修正】セブン-イレブンも2026/2025に分割
+    # 【修正】URLを 2026.html に戻しました（現在は404でもOK）
     {
         "id": "seven_sej_2026", "name": "セブン-イレブン(2026)", "category": "コンビニ",
         "url": "https://www.sej.co.jp/company/news_release/news/2026.html",
@@ -201,7 +200,6 @@ COMPANIES = [
         "badge_color": "#DA291C",
         "date_format": "%Y年%m月%d日"
     },
-    # 【修正】ロッテも2026/2025に分割
     {
         "id": "lotte_2026", "name": "ロッテ(2026)", "category": "お菓子",
         "url": "https://www.lotte.co.jp/info/news/2026.html",
@@ -239,7 +237,6 @@ COMPANIES = [
     },
 
     # --- 冷凍食品メーカー ---
-    # 【修正】ニチレイフーズも2026/2025に分割
     {
         "id": "nichirei_2026", "name": "ニチレイフーズ(2026)", "category": "冷凍食品",
         "url": "https://www.nichirei.co.jp/news/2026/foods.html",

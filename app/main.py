@@ -190,69 +190,74 @@ class NewsScraper:
                     found_count += 1
                     debug_logs.append(f"  -> Found (Life Best): {item['title'][:15]}...")
 
-            # --- セブン＆アイ専用ロジック (全方位探索・下から上へ版) ---
-            elif company["id"] in ["seven_2026", "seven_2025", "seven_hd"]:
-                # ユーザーアイデア：下からスクレイピング（reverse）
-                # 親要素（div）が先に見つかって最初のリンクだけ取ってしまうのを防ぐため、
-                # 子要素（dt, dd等）から先に処理するようにリストを反転させます。
+            # --- セブン＆アイ専用ロジック (挟み撃ち作戦：上から＆下から) ---
+            elif company["id"] in ["seven_2026", "seven_2025"]:
+                
                 seven_target_tags = soup.find_all(['dt', 'dd', 'li', 'div', 'p', 'td', 'span'])
-                seven_target_tags.reverse() # ★ここがポイント：リストを逆順にする
-                
                 seven_processed_urls = set()
+
+                # ★アイデア実装：リストを「そのまま」と「逆順」の2パターン用意して回す
+                directions = [
+                    ("Top-Down", seven_target_tags),           # 上から順
+                    ("Bottom-Up", reversed(seven_target_tags)) # 下から順
+                ]
                 
-                for element in seven_target_tags:
-                    full_text = unicodedata.normalize("NFKC", element.get_text(" ", strip=True))
-                    # 日付判定 (2026年1月5日 or 2026.01.05)
-                    match = re.search(r"(\d{4})\s*[./年]\s*(\d{1,2})\s*[./月]\s*(\d{1,2})", full_text)
-                    if not match: continue
+                for direction_name, tags_list in directions:
+                    debug_logs.append(f"  Start checking: {direction_name}")
                     
-                    y, m, d = match.groups()
-                    found_date_str = f"{y}-{int(m):02d}-{int(d):02d}"
-                    
-                    # 日付が一致したらリンクを探す
-                    if found_date_str == target_date_str:
-                        link_tag = None
+                    for element in tags_list:
+                        full_text = unicodedata.normalize("NFKC", element.get_text(" ", strip=True))
+                        # 日付判定 (2026年1月5日 or 2026.01.05)
+                        match = re.search(r"(\d{4})\s*[./年]\s*(\d{1,2})\s*[./月]\s*(\d{1,2})", full_text)
+                        if not match: continue
                         
-                        # 1. dtタグなら、隣のddを探す (よくあるパターン)
-                        if element.name == 'dt':
-                            dd_node = element.find_next_sibling('dd')
-                            if dd_node: link_tag = dd_node.find('a', href=True)
+                        y, m, d = match.groups()
+                        found_date_str = f"{y}-{int(m):02d}-{int(d):02d}"
                         
-                        # 2. 自分自身または子要素から探す
-                        if not link_tag:
-                            link_tag = element.find('a', href=True)
-                        
-                        # 3. 親要素経由で探す (div構造など)
-                        if not link_tag and element.parent:
-                             link_tag = element.parent.find('a', href=True)
-
-                        if link_tag and link_tag.get("href"):
-                            url = urljoin(company["url"], link_tag["href"])
-                            title = link_tag.get_text(strip=True)
+                        # 日付が一致したらリンクを探す
+                        if found_date_str == target_date_str:
+                            link_tag = None
                             
-                            # タイトルが短すぎる場合は補完
-                            if not title or len(title) < 5:
-                                # ddタグのテキスト全体を使う
-                                if element.name == 'dt':
-                                    dd_next = element.find_next_sibling('dd')
-                                    if dd_next: title = dd_next.get_text(" ", strip=True)
-                                else:
-                                    title = element.parent.get_text(" ", strip=True)
+                            # 1. dtタグなら、隣のddを探す (よくあるパターン)
+                            if element.name == 'dt':
+                                dd_node = element.find_next_sibling('dd')
+                                if dd_node: link_tag = dd_node.find('a', href=True)
+                            
+                            # 2. 自分自身または子要素から探す
+                            if not link_tag:
+                                link_tag = element.find('a', href=True)
+                            
+                            # 3. 親要素経由で探す (div構造など)
+                            if not link_tag and element.parent:
+                                link_tag = element.parent.find('a', href=True)
 
-                            # 重複防止 & 追加
-                            if url not in seven_processed_urls:
-                                all_items.append({
-                                    "company_name": company["name"],
-                                    "badge_color": company["badge_color"],
-                                    "title": title[:100] + "..." if len(title) > 100 else title,
-                                    "url": url,
-                                    "date": found_date_str,
-                                    "is_link_only": False,
-                                    "is_error": False
-                                })
-                                seven_processed_urls.add(url)
-                                found_count += 1
-                                debug_logs.append(f"  -> Found (7&i Reverse): {title[:15]}...")
+                            if link_tag and link_tag.get("href"):
+                                url = urljoin(company["url"], link_tag["href"])
+                                title = link_tag.get_text(strip=True)
+                                
+                                # タイトルが短すぎる場合は補完
+                                if not title or len(title) < 5:
+                                    # ddタグのテキスト全体を使う
+                                    if element.name == 'dt':
+                                        dd_next = element.find_next_sibling('dd')
+                                        if dd_next: title = dd_next.get_text(" ", strip=True)
+                                    else:
+                                        title = element.parent.get_text(" ", strip=True)
+
+                                # 重複防止 & 追加 (seven_processed_urls でチェックするので2回回しても大丈夫)
+                                if url not in seven_processed_urls:
+                                    all_items.append({
+                                        "company_name": company["name"],
+                                        "badge_color": company["badge_color"],
+                                        "title": title[:100] + "..." if len(title) > 100 else title,
+                                        "url": url,
+                                        "date": found_date_str,
+                                        "is_link_only": False,
+                                        "is_error": False
+                                    })
+                                    seven_processed_urls.add(url)
+                                    found_count += 1
+                                    debug_logs.append(f"  -> Found (7&i {direction_name}): {title[:15]}...")
                 
                 # 専用ロジックで見つからなかった場合のみ、下の汎用ロジックへ流す
                 if found_count > 0:
@@ -275,7 +280,7 @@ class NewsScraper:
                     if found_date_str == target_date_str:
                         # ライフとセブンは専用ロジックで処理済みのはずなのでスキップ
                         if company["id"] == "life": continue 
-                        if company["id"] in ["seven_2026", "seven_2025", "seven_hd"]: continue
+                        if company["id"] in ["seven_2026", "seven_2025"]: continue
 
                         debug_logs.append(f"★ MATCH: {found_date_str} in <{element.name}>")
                         link_tag = None
