@@ -149,16 +149,22 @@ class NewsScraper:
                     found_count += 1
                     debug_logs.append(f"  -> Found (Life Best): {item['title'][:15]}...")
 
-            # --- ★ コンビニ共通 強力テキスト検索ロジック ---
-            # セブン、ファミマ、ローソン、ミニストップ全てに対応
+            # --- ★ コンビニ共通 強力テキスト検索ロジック (改良版) ---
             elif company["id"] in ["seven_2026", "seven_2025", "seven_sej_2026", "seven_sej_2025", "famima", "lawson", "ministop"]:
                 
-                # ページ内全域から日付テキストを探す
                 date_pattern = re.compile(r"20\d{2}\s*[./年]\s*\d{1,2}\s*[./月]\s*\d{1,2}")
                 text_nodes = soup.find_all(string=date_pattern)
                 
                 processed_urls_local = set()
                 
+                # ★強化ポイント：除外キーワードリスト
+                ignore_titles = [
+                    "Tweet", "Share", "Facebook", "Line", "RSS", "クリップ", 
+                    "ページ上部へ", "Page Top", "Top", "企業", "ニュース", "ホーム", "IR", "サステナビリティ",
+                    "ニュースリリース", "一覧", "一覧へ", "経営トップメッセージ", "CEO・取締役からのご挨拶",
+                    "すべての記事", "過去の記事", "重要なお知らせ"
+                ]
+
                 for text_node in text_nodes:
                     full_text = unicodedata.normalize("NFKC", text_node.strip())
                     match = re.search(r"(\d{4})\s*[./年]\s*(\d{1,2})\s*[./月]\s*(\d{1,2})", full_text)
@@ -170,59 +176,62 @@ class NewsScraper:
                     if found_date_str == target_date_str:
                         start_node = text_node.parent
                         
-                        # ★修正：日付の「次」にあるリンクをピンポイントで探す (範囲限定)
-                        # limit=5 とすることで、遠く離れた別のニュースのリンクを拾わないようにする
-                        candidates = start_node.find_all_next("a", href=True, limit=5)
+                        # 候補リンクを取得 (少し範囲を広げて10個まで見る)
+                        candidates = start_node.find_all_next("a", href=True, limit=10)
+                        if start_node.name == 'a': candidates.insert(0, start_node)
+                        elif start_node.parent and start_node.parent.name == 'a': candidates.insert(0, start_node.parent)
+
+                        best_candidate = None
                         
-                        # もし日付自体がリンクなら、それも候補に含める
-                        if start_node.name == 'a':
-                            candidates.insert(0, start_node)
-                        elif start_node.parent and start_node.parent.name == 'a':
-                            candidates.insert(0, start_node.parent)
-
-                        valid_link = None
-                        valid_title = ""
-
                         for link in candidates:
                             t = link.get_text(strip=True)
                             h = link.get("href")
-                            
-                            # ゴミ箱フィルター
-                            if t in ["Tweet", "Share", "Facebook", "Line", "RSS", "クリップ", "ページ上部へ", "Page Top", "Top", "企業", "ニュース", "ホーム", "IR", "サステナビリティ"]: continue
+                            url = urljoin(company["url"], h)
+
+                            # ★強化ポイント：自分自身(一覧ページ)へのリンクは除外 (ミニストップ対策)
+                            # クエリパラメータを除去して比較
+                            if url.split('?')[0] == company["url"].split('?')[0]: continue
                             if "twitter.com" in h or "facebook.com" in h or "line.me" in h: continue
                             if "#top" in h or h == "/" or h == "#": continue 
+                            if t in ignore_titles: continue
                             
                             # タイトル補完ロジック
                             if len(t) < 5:
                                 if link.parent:
                                     parent_text = link.parent.get_text(" ", strip=True)
                                     parent_text = unicodedata.normalize("NFKC", parent_text)
-                                    
-                                    # ★修正：正規表現で「日付部分」を強制的に削除する
-                                    # (例: "2026年1月5日" でも "2026.01.05" でも消す)
+                                    # 日付部分削除
                                     parent_text = re.sub(r"20\d{2}\s*[./年]\s*\d{1,2}\s*[./月]\s*\d{1,2}\s*日?", "", parent_text)
                                     clean_title = parent_text.strip()
-                                    
-                                    if len(clean_title) > 3:
+                                    if len(clean_title) > 3: 
                                         t = clean_title
-                                    elif ".pdf" in h:
+                                    elif ".pdf" in h.lower(): # PDFならタイトルなしでも許可
                                         t = "PDF資料"
                                     else:
                                         continue
                                 else:
                                     continue
 
-                            valid_link = link
-                            valid_title = t
-                            break
+                            is_pdf = ".pdf" in h.lower()
+                            is_long_text = len(t) > 5
+                            
+                            # ★強化ポイント：PDFなら即採用（これがセブン対策の切り札）
+                            if is_pdf:
+                                best_candidate = (link, t, url)
+                                break 
+                            
+                            # まだ候補が決まってなくて、かつまともなテキストなら一旦候補にする
+                            # (ただし後ろにもっと良いリンクがあるかもしれないのでbreakしない)
+                            if best_candidate is None and is_long_text:
+                                best_candidate = (link, t, url)
                         
-                        if valid_link:
-                            url = urljoin(company["url"], valid_link["href"])
+                        if best_candidate:
+                            link, t, url = best_candidate
                             if url not in processed_urls_local:
                                 all_items.append({
                                     "company_name": company["name"],
                                     "badge_color": company["badge_color"],
-                                    "title": valid_title[:100] + "..." if len(valid_title) > 100 else valid_title,
+                                    "title": t[:100] + "..." if len(t) > 100 else t,
                                     "url": url,
                                     "date": found_date_str,
                                     "is_link_only": False,
@@ -230,7 +239,7 @@ class NewsScraper:
                                 })
                                 processed_urls_local.add(url)
                                 found_count += 1
-                                debug_logs.append(f"  -> Found (Strong Search): {valid_title[:15]}...")
+                                debug_logs.append(f"  -> Found (Strong Search): {t[:15]}...")
                 
                 if found_count > 0: continue
 
@@ -245,6 +254,7 @@ class NewsScraper:
                     if not match: continue
                     y, m, d = match.groups()
                     found_date_str = f"{y}-{int(m):02d}-{int(d):02d}"
+                    
                     if found_date_str == target_date_str:
                         if company["id"] in ["life", "seven_2026", "seven_2025", "famima", "lawson", "ministop", "seven_sej_2026", "seven_sej_2025"]: continue
                         debug_logs.append(f"★ MATCH: {found_date_str} in <{element.name}>")
