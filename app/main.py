@@ -188,31 +188,23 @@ class NewsScraper:
                     found_count += 1
                     debug_logs.append(f"  -> Found (Life Best): {item['title'][:15]}...")
 
-            # --- セブン＆アイ専用ロジック (エリア限定＋テキストサーチ) ---
+            # --- セブン＆アイ専用ロジック (完成版：親テキスト活用) ---
             elif company["id"] in ["seven_2026", "seven_2025"]:
                 
-                # ★ここが新機能：ニュースがありそうな場所だけに絞る！
-                # ヘッダーやフッターを除外し、メインコンテンツエリア（main, article, div.newsなど）から探す
+                # エリア限定（ヘッダー等は無視）
                 main_area = None
-                
-                # 候補となるエリアタグ
                 possible_areas = [
                     soup.find('main'),
                     soup.find('article'),
                     soup.find('div', class_=re.compile('news|release|topics|main')),
                     soup.find('ul', class_=re.compile('news|list'))
                 ]
-                
-                # 見つかった最初のエリアを採用（なければページ全体）
                 for area in possible_areas:
                     if area:
                         main_area = area
                         break
-                
-                if not main_area:
-                    main_area = soup # 見つからなければ全体から探す
+                if not main_area: main_area = soup
 
-                # 絞り込んだエリアの中から日付を探す
                 date_pattern = re.compile(r"20\d{2}\s*[./年]\s*\d{1,2}\s*[./月]\s*\d{1,2}")
                 text_nodes = main_area.find_all(string=date_pattern)
                 
@@ -245,20 +237,32 @@ class NewsScraper:
                             t = link.get_text(strip=True)
                             h = link.get("href")
                             
-                            # ゴミ箱フィルター（企業、IR、トップなども除外）
+                            # ゴミ箱フィルター
                             if t in ["Tweet", "Share", "Facebook", "Line", "RSS", "クリップ", "ページ上部へ", "Page Top", "Top", "企業", "ニュース", "ホーム", "IR", "サステナビリティ"]: continue
                             if "twitter.com" in h or "facebook.com" in h or "line.me" in h: continue
                             if "#top" in h or h == "/" or h == "#": continue 
                             
+                            # ★ここが修正ポイント：文字なしリンクの救済措置を修正
                             if len(t) < 2:
                                 if link.parent:
+                                    # 親のテキストを取得
                                     parent_text = link.parent.get_text(" ", strip=True)
-                                    if len(parent_text) > 5 and found_date_str.replace("-", "年") not in parent_text: 
-                                        t = parent_text
+                                    parent_text = unicodedata.normalize("NFKC", parent_text)
+                                    
+                                    # 親テキストから「日付」を削除して、残りをタイトルにする！
+                                    # (例: "2026年1月5日 自己株式..." -> "自己株式...")
+                                    date_in_parent = f"{y}年{int(m)}月{int(d)}日"
+                                    parent_text = parent_text.replace(date_in_parent, "").strip()
+                                    parent_text = parent_text.replace(full_text, "").strip() #念のため元のテキストでも削除
+                                    
+                                    if len(parent_text) > 3:
+                                        t = parent_text # 採用！
                                     elif ".pdf" in h:
                                         t = "PDF資料（タイトル不明）"
                                     else:
-                                        continue 
+                                        continue # それでもダメなら次へ
+                                else:
+                                    continue
 
                             valid_link = link
                             valid_title = t
@@ -279,7 +283,7 @@ class NewsScraper:
                                 })
                                 seven_processed_urls.add(url)
                                 found_count += 1
-                                debug_logs.append(f"  -> Found (7&i AreaLimit): {valid_title[:15]}...")
+                                debug_logs.append(f"  -> Found (7&i Final): {valid_title[:15]}...")
                 
                 if found_count > 0:
                     continue
