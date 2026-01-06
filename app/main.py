@@ -188,8 +188,8 @@ class NewsScraper:
                     found_count += 1
                     debug_logs.append(f"  -> Found (Life Best): {item['title'][:15]}...")
 
-            # --- セブン＆アイ専用ロジック (テキスト直撃サーチ) ---
-            # ※前回までの最新ロジックを維持
+            # --- セブン＆アイ専用ロジック (親会社) ---
+            # ここは 7andi.com (ホールディングス) 用のロジックです
             elif company["id"] in ["seven_2026", "seven_2025"]:
                 main_area = None
                 possible_areas = [
@@ -261,12 +261,12 @@ class NewsScraper:
                                 })
                                 seven_processed_urls.add(url)
                                 found_count += 1
-                                debug_logs.append(f"  -> Found (7&i Final): {valid_title[:15]}...")
+                                debug_logs.append(f"  -> Found (7&i HD Final): {valid_title[:15]}...")
                 if found_count > 0: continue
 
-            # --- ★ 新・強力テキスト検索ロジック (ファミマ、ローソン、ミニストップ用) ---
-            # ここが今回の修正の目玉です！
-            elif company["id"] in ["famima", "lawson", "ministop"]:
+            # --- ★ 新・強力テキスト検索ロジック (CVS連合：ファミマ、ローソン、ミニストップ、セブン-イレブン) ---
+            # ★ここに seven_sej_2026 と seven_sej_2025 を追加しました！
+            elif company["id"] in ["famima", "lawson", "ministop", "seven_sej_2026", "seven_sej_2025"]:
                 
                 # ページ内のあらゆる場所にある「日付テキスト」を全て探す
                 date_pattern = re.compile(r"20\d{2}\s*[./年]\s*\d{1,2}\s*[./月]\s*\d{1,2}")
@@ -325,7 +325,7 @@ class NewsScraper:
                                 })
                                 processed_urls_local.add(url)
                                 found_count += 1
-                                debug_logs.append(f"  -> Found (CVS TextSearch): {title[:15]}...")
+                                debug_logs.append(f"  -> Found (CVS Strong): {title[:15]}...")
                 
                 if found_count > 0: continue
 
@@ -345,7 +345,7 @@ class NewsScraper:
                     
                     if found_date_str == target_date_str:
                         # 専用ロジック済みの企業はスキップ
-                        if company["id"] in ["life", "seven_2026", "seven_2025", "famima", "lawson", "ministop"]: continue
+                        if company["id"] in ["life", "seven_2026", "seven_2025", "famima", "lawson", "ministop", "seven_sej_2026", "seven_sej_2025"]: continue
 
                         debug_logs.append(f"★ MATCH: {found_date_str} in <{element.name}>")
                         link_tag = None
