@@ -188,11 +188,10 @@ class NewsScraper:
                     found_count += 1
                     debug_logs.append(f"  -> Found (Life Best): {item['title'][:15]}...")
 
-            # --- セブン＆アイ専用ロジック (テキスト直撃サーチ版) ---
+            # --- セブン＆アイ専用ロジック (テキスト直撃サーチ＋Tweet除外版) ---
             elif company["id"] in ["seven_2026", "seven_2025"]:
                 
-                # ★修正：タグではなく、ページ内の「日付っぽいテキスト」を直接探す
-                # これならどんなタグに入っていても見つかります
+                # ページ内の「日付っぽいテキスト」を直接探す
                 date_pattern = re.compile(r"20\d{2}\s*[./年]\s*\d{1,2}\s*[./月]\s*\d{1,2}")
                 text_nodes = soup.find_all(string=date_pattern)
                 
@@ -207,48 +206,55 @@ class NewsScraper:
                     found_date_str = f"{y}-{int(m):02d}-{int(d):02d}"
                     
                     if found_date_str == target_date_str:
-                        # 日付が見つかった場所(text_node)から、リンクを探す旅に出る
-                        start_node = text_node.parent # テキストが入っているタグ（例: <dt>, <time>, <span>）
-                        link_tag = None
+                        # 日付が見つかった場所(start_node)から、近くのリンク候補を集める
+                        start_node = text_node.parent
                         
-                        # 1. 自分の親がリンクそのものだった場合
+                        # 候補リスト：兄弟要素や、少し先の要素を含める
+                        candidates = []
+                        
+                        # 1. 親要素がリンクそのものなら最優先
                         if start_node.name == 'a':
-                            link_tag = start_node
+                            candidates.append(start_node)
                         
-                        # 2. すぐ近くの兄弟要素 (例: <dt>日付</dt> の隣の <dd><a...>)
-                        if not link_tag:
-                            sibling_dd = start_node.find_next_sibling(['dd', 'td', 'li'])
-                            if sibling_dd:
-                                link_tag = sibling_dd.find('a', href=True)
-                        
-                        # 3. 親要素を遡って探す (例: <div><span>日付</span><a...></div>)
-                        if not link_tag:
-                            parent = start_node.parent
-                            if parent:
-                                link_tag = parent.find('a', href=True)
-                                # もう一つ上も念のため
-                                if not link_tag and parent.parent:
-                                    link_tag = parent.parent.find('a', href=True)
-
-                        # 4. それでも無ければ、文書構造上の「次」にあるリンクを強制的に取る
-                        if not link_tag:
-                            link_tag = start_node.find_next("a", href=True)
-
-                        if link_tag and link_tag.get("href"):
-                            url = urljoin(company["url"], link_tag["href"])
-                            title = link_tag.get_text(strip=True)
+                        # 2. 親要素内の他のリンク (例: <dd>内のリンク)
+                        if start_node.parent:
+                            candidates.extend(start_node.parent.find_all('a', href=True))
                             
-                            # タイトル補完
-                            if not title or len(title) < 5:
-                                # リンクの親テキストを使ってみる
-                                if link_tag.parent:
-                                    title = link_tag.parent.get_text(" ", strip=True)
+                        # 3. 文書構造上の「次のリンク」を5つ先まで取得
+                        candidates.extend(start_node.find_all_next("a", href=True, limit=5))
+                        
+                        valid_link = None
+                        valid_title = ""
+
+                        # 候補の中から「Tweet」じゃないまともなリンクを選ぶ
+                        for link in candidates:
+                            t = link.get_text(strip=True)
+                            h = link.get("href")
+                            
+                            # ★ゴミ箱フィルター：SNSボタン系を除外
+                            if t in ["Tweet", "Share", "Facebook", "RSS", "クリップ", "Line"]: continue
+                            if "twitter.com" in h or "facebook.com" in h: continue
+                            if len(t) < 2: continue # 1文字のリンクなどは無視
+
+                            # 合格！これを採用
+                            valid_link = link
+                            valid_title = t
+                            break
+                        
+                        if valid_link:
+                            url = urljoin(company["url"], valid_link["href"])
+                            
+                            # タイトル補完（もしリンクテキストが短すぎたら親のテキストを使う）
+                            if len(valid_title) < 5 and valid_link.parent:
+                                parent_text = valid_link.parent.get_text(" ", strip=True)
+                                if len(parent_text) > len(valid_title):
+                                    valid_title = parent_text
 
                             if url not in seven_processed_urls:
                                 all_items.append({
                                     "company_name": company["name"],
                                     "badge_color": company["badge_color"],
-                                    "title": title[:100] + "..." if len(title) > 100 else title,
+                                    "title": valid_title[:100] + "..." if len(valid_title) > 100 else valid_title,
                                     "url": url,
                                     "date": found_date_str,
                                     "is_link_only": False,
@@ -256,7 +262,7 @@ class NewsScraper:
                                 })
                                 seven_processed_urls.add(url)
                                 found_count += 1
-                                debug_logs.append(f"  -> Found (7&i TextSearch): {title[:15]}...")
+                                debug_logs.append(f"  -> Found (7&i Filtered): {valid_title[:15]}...")
                 
                 if found_count > 0:
                     continue
