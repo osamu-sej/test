@@ -188,10 +188,10 @@ class NewsScraper:
                     found_count += 1
                     debug_logs.append(f"  -> Found (Life Best): {item['title'][:15]}...")
 
-            # --- セブン＆アイ専用ロジック (完成版：親テキスト活用＆ゴミ除外) ---
+            # --- セブン＆アイ専用ロジック (テキスト直撃サーチ＋親テキスト活用・修正版) ---
             elif company["id"] in ["seven_2026", "seven_2025"]:
                 
-                # メインエリア限定
+                # エリア限定（ヘッダー等は無視）
                 main_area = None
                 possible_areas = [
                     soup.find('main'),
@@ -242,23 +242,26 @@ class NewsScraper:
                             if "twitter.com" in h or "facebook.com" in h or "line.me" in h: continue
                             if "#top" in h or h == "/" or h == "#": continue 
                             
-                            # ★修正：文字なしリンク（PDFアイコン等）の場合
-                            if len(t) < 2:
+                            # ★修正ポイント：文字数が少ない（PDF等）場合
+                            if len(t) < 5:
                                 if link.parent:
-                                    # 親のテキストを取得
+                                    # 親のテキストを取得して、タイトルとして使う
                                     parent_text = link.parent.get_text(" ", strip=True)
                                     parent_text = unicodedata.normalize("NFKC", parent_text)
                                     
-                                    # 日付部分を削除して、残りをタイトルとして採用する
+                                    # 日付文字列を削除して、残りをタイトルにする
+                                    # (例: "2026年1月5日 自己株式..." -> "自己株式...")
                                     date_str_jp = f"{y}年{int(m)}月{int(d)}日"
                                     cleaned_text = parent_text.replace(date_str_jp, "").strip()
                                     cleaned_text = cleaned_text.replace(full_text, "").strip()
                                     
+                                    # 日付を消してもまだ文字が残っていれば、それをタイトルとして採用！
                                     if len(cleaned_text) > 3:
-                                        t = cleaned_text # 日付以外の文字があればそれをタイトルにする
+                                        t = cleaned_text 
                                     elif ".pdf" in h:
-                                        t = "PDF資料" # それでもダメなら仮タイトル
+                                        t = "PDF資料"
                                     else:
+                                        # 親テキストもダメなら、次のリンク候補へ
                                         continue
                                 else:
                                     continue
