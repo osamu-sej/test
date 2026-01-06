@@ -191,7 +191,7 @@ class NewsScraper:
             # --- セブン＆アイ専用ロジック (テキスト直撃サーチ＋Tweet除外版) ---
             elif company["id"] in ["seven_2026", "seven_2025"]:
                 
-                # ページ内の「日付っぽいテキスト」を直接探す
+                # 日付テキストを探す
                 date_pattern = re.compile(r"20\d{2}\s*[./年]\s*\d{1,2}\s*[./月]\s*\d{1,2}")
                 text_nodes = soup.find_all(string=date_pattern)
                 
@@ -206,34 +206,27 @@ class NewsScraper:
                     found_date_str = f"{y}-{int(m):02d}-{int(d):02d}"
                     
                     if found_date_str == target_date_str:
-                        # 日付が見つかった場所(start_node)から、近くのリンク候補を集める
                         start_node = text_node.parent
                         
-                        # 候補リスト：兄弟要素や、少し先の要素を含める
+                        # 候補となるリンクを周辺からかき集める
                         candidates = []
-                        
-                        # 1. 親要素がリンクそのものなら最優先
-                        if start_node.name == 'a':
-                            candidates.append(start_node)
-                        
-                        # 2. 親要素内の他のリンク (例: <dd>内のリンク)
+                        if start_node.name == 'a': candidates.append(start_node)
                         if start_node.parent:
                             candidates.extend(start_node.parent.find_all('a', href=True))
-                            
-                        # 3. 文書構造上の「次のリンク」を5つ先まで取得
+                        # 少し先まで探す
                         candidates.extend(start_node.find_all_next("a", href=True, limit=5))
                         
                         valid_link = None
                         valid_title = ""
 
-                        # 候補の中から「Tweet」じゃないまともなリンクを選ぶ
+                        # ★ここが新機能：候補の中から「Tweet」じゃないまともなリンクを選ぶ
                         for link in candidates:
                             t = link.get_text(strip=True)
                             h = link.get("href")
                             
-                            # ★ゴミ箱フィルター：SNSボタン系を除外
-                            if t in ["Tweet", "Share", "Facebook", "RSS", "クリップ", "Line"]: continue
-                            if "twitter.com" in h or "facebook.com" in h: continue
+                            # ゴミ箱フィルター：SNSボタン系を除外
+                            if t in ["Tweet", "Share", "Facebook", "Line", "RSS", "クリップ"]: continue
+                            if "twitter.com" in h or "facebook.com" in h or "line.me" in h: continue
                             if len(t) < 2: continue # 1文字のリンクなどは無視
 
                             # 合格！これを採用
