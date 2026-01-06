@@ -14,7 +14,7 @@ COMPANIES = [
         "badge_color": "#EA5514",
         "date_format": "%Y年%m月%d日"
     },
-    # 【修正】URLを 2026.html に戻しました（現在は404でもOK）
+    # 【修正】URLを 2026.html に戻しました
     {
         "id": "seven_sej_2026", "name": "セブン-イレブン(2026)", "category": "コンビニ",
         "url": "https://www.sej.co.jp/company/news_release/news/2026.html",
