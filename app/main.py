@@ -188,96 +188,38 @@ class NewsScraper:
                     found_count += 1
                     debug_logs.append(f"  -> Found (Life Best): {item['title'][:15]}...")
 
-            # --- セブン＆アイ専用ロジック (テキスト直撃サーチ＋親テキスト活用・修正版) ---
+            # --- セブン＆アイ専用ロジック (現状維持) ---
+            # いったん深追いせず、安定動作していた頃のロジックに戻しています
             elif company["id"] in ["seven_2026", "seven_2025"]:
-                
-                # エリア限定（ヘッダー等は無視）
-                main_area = None
-                possible_areas = [
-                    soup.find('main'),
-                    soup.find('article'),
-                    soup.find('div', class_=re.compile('news|release|topics|main')),
-                    soup.find('ul', class_=re.compile('news|list'))
-                ]
-                for area in possible_areas:
-                    if area:
-                        main_area = area
-                        break
-                if not main_area: main_area = soup
-
-                date_pattern = re.compile(r"20\d{2}\s*[./年]\s*\d{1,2}\s*[./月]\s*\d{1,2}")
-                text_nodes = main_area.find_all(string=date_pattern)
-                
+                seven_target_tags = soup.find_all(['dt', 'dd', 'li', 'div', 'p'])
                 seven_processed_urls = set()
                 
-                for text_node in text_nodes:
-                    full_text = unicodedata.normalize("NFKC", text_node.strip())
+                for element in seven_target_tags:
+                    full_text = unicodedata.normalize("NFKC", element.get_text(" ", strip=True))
                     match = re.search(r"(\d{4})\s*[./年]\s*(\d{1,2})\s*[./月]\s*(\d{1,2})", full_text)
                     if not match: continue
-                    
                     y, m, d = match.groups()
                     found_date_str = f"{y}-{int(m):02d}-{int(d):02d}"
                     
                     if found_date_str == target_date_str:
-                        start_node = text_node.parent
-                        
-                        candidates = []
-                        if start_node.name == 'a': candidates.append(start_node)
-                        if start_node.parent:
-                            candidates.extend(start_node.parent.find_all('a', href=True))
-                        if start_node.parent and start_node.parent.parent:
-                            candidates.extend(start_node.parent.parent.find_all('a', href=True))
-                        
-                        candidates.extend(start_node.find_all_next("a", href=True, limit=10))
-                        
-                        valid_link = None
-                        valid_title = ""
+                        link_tag = element.find('a', href=True)
+                        if not link_tag and element.name == 'dt':
+                            dd = element.find_next_sibling('dd')
+                            if dd: link_tag = dd.find('a', href=True)
+                        if not link_tag and element.parent:
+                            link_tag = element.parent.find('a', href=True)
 
-                        for link in candidates:
-                            t = link.get_text(strip=True)
-                            h = link.get("href")
-                            
-                            # ゴミ箱フィルター
-                            if t in ["Tweet", "Share", "Facebook", "Line", "RSS", "クリップ", "ページ上部へ", "Page Top", "Top", "企業", "ニュース", "ホーム", "IR", "サステナビリティ"]: continue
-                            if "twitter.com" in h or "facebook.com" in h or "line.me" in h: continue
-                            if "#top" in h or h == "/" or h == "#": continue 
-                            
-                            # ★修正ポイント：文字数が少ない（PDF等）場合
-                            if len(t) < 5:
-                                if link.parent:
-                                    # 親のテキストを取得して、タイトルとして使う
-                                    parent_text = link.parent.get_text(" ", strip=True)
-                                    parent_text = unicodedata.normalize("NFKC", parent_text)
-                                    
-                                    # 日付文字列を削除して、残りをタイトルにする
-                                    # (例: "2026年1月5日 自己株式..." -> "自己株式...")
-                                    date_str_jp = f"{y}年{int(m)}月{int(d)}日"
-                                    cleaned_text = parent_text.replace(date_str_jp, "").strip()
-                                    cleaned_text = cleaned_text.replace(full_text, "").strip()
-                                    
-                                    # 日付を消してもまだ文字が残っていれば、それをタイトルとして採用！
-                                    if len(cleaned_text) > 3:
-                                        t = cleaned_text 
-                                    elif ".pdf" in h:
-                                        t = "PDF資料"
-                                    else:
-                                        # 親テキストもダメなら、次のリンク候補へ
-                                        continue
-                                else:
-                                    continue
-
-                            valid_link = link
-                            valid_title = t
-                            break
-                        
-                        if valid_link:
-                            url = urljoin(company["url"], valid_link["href"])
+                        if link_tag and link_tag.get("href"):
+                            url = urljoin(company["url"], link_tag["href"])
+                            title = link_tag.get_text(strip=True)
+                            if not title and link_tag.parent:
+                                title = link_tag.parent.get_text(" ", strip=True).replace(full_text, "").strip()
                             
                             if url not in seven_processed_urls:
                                 all_items.append({
                                     "company_name": company["name"],
                                     "badge_color": company["badge_color"],
-                                    "title": valid_title[:100] + "..." if len(valid_title) > 100 else valid_title,
+                                    "title": title[:100] + "..." if len(title) > 100 else title,
                                     "url": url,
                                     "date": found_date_str,
                                     "is_link_only": False,
@@ -285,7 +227,7 @@ class NewsScraper:
                                 })
                                 seven_processed_urls.add(url)
                                 found_count += 1
-                                debug_logs.append(f"  -> Found (7&i Final): {valid_title[:15]}...")
+                                debug_logs.append(f"  -> Found (7&i Standard): {title[:15]}...")
                 
                 if found_count > 0:
                     continue
@@ -358,7 +300,10 @@ class NewsScraper:
                                 processed_urls.add(url)
                                 found_count += 1
                                 debug_logs.append(f"  -> Found: {title[:15]}...")
-                                break
+                                
+                                # ★修正ポイント：ファミマ・ローソン・ミニストップなどは1つ見つけても終了しない！
+                                if company["id"] not in ["famima", "lawson", "ministop"]:
+                                    break 
             
             if found_count == 0:
                 debug_logs.append("Result: 0 items found.")
