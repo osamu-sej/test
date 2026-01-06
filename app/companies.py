@@ -15,8 +15,8 @@ COMPANIES = [
         "date_format": "%Y年%m月%d日"
     },
     {
-        "id": "seven_sej_2026", "name": "セブン-イレブン(2026)", "category": "コンビニ",
-        "url": "https://www.sej.co.jp/company/news_release/news/2026.html",
+        "id": "seven_sej_2026", "name": "セブン-イレブン(最新)", "category": "コンビニ",
+        "url": "https://www.sej.co.jp/company/news_release/news/index.html",
         "scraper_type": "auto",
         "badge_color": "#EA5514",
         "date_format": "%Y.%m.%d"
