@@ -22,13 +22,6 @@ COMPANIES = [
         "date_format": "%Y.%m.%d"
     },
     {
-        "id": "seven_sej_2025", "name": "セブン-イレブン(2025)", "category": "コンビニ",
-        "url": "https://www.sej.co.jp/company/news_release/news/2025.html",
-        "scraper_type": "auto",
-        "badge_color": "#EA5514",
-        "date_format": "%Y.%m.%d"
-    },
-    {
         "id": "famima", "name": "ファミリーマート", "category": "コンビニ",
         "url": "https://www.family.co.jp/company/news_releases.html",
         "scraper_type": "auto",
