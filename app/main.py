@@ -149,7 +149,7 @@ class NewsScraper:
                     found_count += 1
                     debug_logs.append(f"  -> Found (Life Best): {item['title'][:15]}...")
 
-            # --- ★ コンビニ共通 強力テキスト検索ロジック (最終版) ---
+            # --- ★ コンビニ共通 (加点方式の改良版) ---
             elif company["id"] in ["seven_2026", "seven_2025", "seven_sej_2026", "seven_sej_2025", "famima", "lawson", "ministop"]:
                 
                 date_pattern = re.compile(r"20\d{2}\s*[./年]\s*\d{1,2}\s*[./月]\s*\d{1,2}")
@@ -157,7 +157,6 @@ class NewsScraper:
                 
                 processed_urls_local = set()
                 
-                # ★強化: NGタイトルリスト（これらを「ゴミ」として無視します）
                 ignore_titles = [
                     "Tweet", "Share", "Facebook", "Line", "RSS", "クリップ", 
                     "ページ上部へ", "Page Top", "Top", "企業", "ニュース", "ホーム", "IR", "サステナビリティ",
@@ -180,28 +179,31 @@ class NewsScraper:
                         if start_node.name == 'a': candidates.insert(0, start_node)
                         elif start_node.parent and start_node.parent.name == 'a': candidates.insert(0, start_node.parent)
 
-                        best_candidate = None
-                        
+                        best_link = None
+                        best_title = ""
+                        max_score = -1
+
                         for link in candidates:
                             t = link.get_text(strip=True)
                             h = link.get("href")
                             url = urljoin(company["url"], h)
-
-                            # ★強化: 自分自身(一覧ページ)へのリンクは除外
-                            if url.split('?')[0].rstrip('/') == company["url"].split('?')[0].rstrip('/'): continue
                             
-                            # SNS系除外
-                            if "twitter.com" in h or "facebook.com" in h or "line.me" in h: continue
-                            if "#top" in h or h == "/" or h == "#": continue 
+                            score = 0
                             
-                            # ★強化: NGワードが含まれていたら即スキップ
-                            is_ng = False
+                            # 1. 除外チェック (スコア -100)
+                            if url.split('?')[0].rstrip('/') == company["url"].split('?')[0].rstrip('/'): score = -100
+                            if "twitter.com" in h or "facebook.com" in h or "line.me" in h: score = -100
+                            if "#top" in h or h == "/" or h == "#": score = -100
                             for ng in ignore_titles:
-                                if ng in t: # 部分一致で除外 (例: 「ニュースリリース」を含むもの全て)
-                                    is_ng = True; break
-                            if is_ng: continue
+                                if ng in t: score = -100
                             
-                            # タイトル補完 (日付削除)
+                            if score < 0: continue
+
+                            # 2. 加点チェック
+                            if ".pdf" in h.lower(): score += 50  # PDFは高得点
+                            if len(t) > 5: score += 10 # 長いタイトルは良い
+                            
+                            # タイトル整形
                             if len(t) < 5:
                                 if link.parent:
                                     parent_text = link.parent.get_text(" ", strip=True)
@@ -210,32 +212,31 @@ class NewsScraper:
                                     clean_title = parent_text.strip()
                                     if len(clean_title) > 3: 
                                         t = clean_title
+                                        score += 20 # 親テキストから取れたら加点
                                     elif ".pdf" in h.lower(): 
                                         t = "PDF資料"
+                                        score += 5 # タイトルなしPDF
                                     else:
                                         continue
                                 else:
                                     continue
-
-                            is_pdf = ".pdf" in h.lower()
-                            is_long_text = len(t) > 5
                             
-                            # ★強化: PDFなら即決採用 (セブンの自己株式対策)
-                            if is_pdf:
-                                best_candidate = (link, t, url)
-                                break 
-                            
-                            # まだ候補がなくて、まともなテキストなら候補にする
-                            if best_candidate is None and is_long_text:
-                                best_candidate = (link, t, url)
+                            # 最もスコアが高いものを採用
+                            if score > max_score:
+                                max_score = score
+                                best_link = link
+                                best_title = t
+                                # PDFが見つかったら即決してもよいが、念のため最後まで見る
+                                if score >= 50: 
+                                    break 
                         
-                        if best_candidate:
-                            link, t, url = best_candidate
+                        if best_link and max_score > 0:
+                            url = urljoin(company["url"], best_link["href"])
                             if url not in processed_urls_local:
                                 all_items.append({
                                     "company_name": company["name"],
                                     "badge_color": company["badge_color"],
-                                    "title": t[:100] + "..." if len(t) > 100 else t,
+                                    "title": best_title[:100] + "..." if len(best_title) > 100 else best_title,
                                     "url": url,
                                     "date": found_date_str,
                                     "is_link_only": False,
@@ -243,7 +244,7 @@ class NewsScraper:
                                 })
                                 processed_urls_local.add(url)
                                 found_count += 1
-                                debug_logs.append(f"  -> Found (Strong Search): {t[:15]}...")
+                                debug_logs.append(f"  -> Found (Score {max_score}): {best_title[:15]}...")
                 
                 if found_count > 0: continue
 

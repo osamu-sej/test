@@ -14,10 +14,9 @@ COMPANIES = [
         "badge_color": "#EA5514",
         "date_format": "%Y年%m月%d日"
     },
-    # 【修正】index.html を削除し、ディレクトリ指定に変更（これで404が直ります）
     {
         "id": "seven_sej_2026", "name": "セブン-イレブン(2026)", "category": "コンビニ",
-        "url": "https://www.sej.co.jp/company/news_release/news/2026.html",
+        "url": "https://www.sej.co.jp/company/news_release/news/2026.html", # 元に戻しました
         "scraper_type": "auto",
         "badge_color": "#EA5514",
         "date_format": "%Y.%m.%d"
