@@ -30,7 +30,7 @@ class NewsScraper:
             badge_color = "#3b82f6" 
             is_link_only = True
         elif status_code == 404:
-            return None 
+            return None # 404は無視
         else:
             code_str = f" ({status_code})" if status_code else ""
             title = f"【エラー】公式サイトを開く{code_str}"
@@ -149,20 +149,17 @@ class NewsScraper:
                     found_count += 1
                     debug_logs.append(f"  -> Found (Life Best): {item['title'][:15]}...")
 
-            # --- ★ コンビニ共通 (加点方式の改良版) ---
-            elif company["id"] in ["seven_2026", "seven_2025", "seven_sej_2026", "seven_sej_2025", "famima", "lawson", "ministop"]:
+            # --- ★ コンビニ共通 (採点方式V3: 確実性重視) ---
+            # 7andi, sej, famima, lawson, ministop 全てに対応
+            elif company["id"] in ["seven_2026", "seven_2025", "seven_sej_2026", "seven_sej_2025", "famima", "lawson", "ministop", "ministop_2025"]:
                 
                 date_pattern = re.compile(r"20\d{2}\s*[./年]\s*\d{1,2}\s*[./月]\s*\d{1,2}")
                 text_nodes = soup.find_all(string=date_pattern)
                 
                 processed_urls_local = set()
                 
-                ignore_titles = [
-                    "Tweet", "Share", "Facebook", "Line", "RSS", "クリップ", 
-                    "ページ上部へ", "Page Top", "Top", "企業", "ニュース", "ホーム", "IR", "サステナビリティ",
-                    "ニュースリリース", "一覧", "一覧へ", "経営トップメッセージ", "CEO・取締役からのご挨拶",
-                    "すべての記事", "過去の記事", "重要なお知らせ", "トップメッセージ", "会社案内"
-                ]
+                # 絶対に除外したいワード (スコア -100)
+                ban_words = ["ページ上部へ", "Page Top", "Top", "ニュースリリース", "一覧", "経営トップメッセージ"]
 
                 for text_node in text_nodes:
                     full_text = unicodedata.normalize("NFKC", text_node.strip())
@@ -175,13 +172,14 @@ class NewsScraper:
                     if found_date_str == target_date_str:
                         start_node = text_node.parent
                         
+                        # 候補リンクを収集 (近くの10個を見る)
                         candidates = start_node.find_all_next("a", href=True, limit=10)
                         if start_node.name == 'a': candidates.insert(0, start_node)
                         elif start_node.parent and start_node.parent.name == 'a': candidates.insert(0, start_node.parent)
 
                         best_link = None
                         best_title = ""
-                        max_score = -1
+                        max_score = -999 # 初期値
 
                         for link in candidates:
                             t = link.get_text(strip=True)
@@ -190,47 +188,46 @@ class NewsScraper:
                             
                             score = 0
                             
-                            # 1. 除外チェック (スコア -100)
-                            if url.split('?')[0].rstrip('/') == company["url"].split('?')[0].rstrip('/'): score = -100
-                            if "twitter.com" in h or "facebook.com" in h or "line.me" in h: score = -100
-                            if "#top" in h or h == "/" or h == "#": score = -100
-                            for ng in ignore_titles:
-                                if ng in t: score = -100
+                            # 1. 致命的な除外条件 (-100点)
+                            # 自分自身へのリンクは除外 (ミニストップ対策)
+                            if url.split('?')[0].rstrip('/') == company["url"].split('?')[0].rstrip('/'): score = -100 
+                            if "twitter.com" in h or "facebook.com" in h: score = -100
+                            if "#top" in h or h == "#": score = -100
+                            for ban in ban_words:
+                                if ban in t: score = -100
                             
-                            if score < 0: continue
+                            if score == -100: continue
 
-                            # 2. 加点チェック
-                            if ".pdf" in h.lower(): score += 50  # PDFは高得点
-                            if len(t) > 5: score += 10 # 長いタイトルは良い
+                            # 2. 加点要素
+                            if ".pdf" in h.lower(): score += 50  # PDFは最強
+                            if len(t) > 5: score += 10 # 文字数が多いと良い
                             
-                            # タイトル整形
+                            # タイトル整形 & 補完
                             if len(t) < 5:
                                 if link.parent:
                                     parent_text = link.parent.get_text(" ", strip=True)
                                     parent_text = unicodedata.normalize("NFKC", parent_text)
+                                    # 日付文字列を削除
                                     parent_text = re.sub(r"20\d{2}\s*[./年]\s*\d{1,2}\s*[./月]\s*\d{1,2}\s*日?", "", parent_text)
                                     clean_title = parent_text.strip()
+                                    
                                     if len(clean_title) > 3: 
                                         t = clean_title
-                                        score += 20 # 親テキストから取れたら加点
+                                        score += 20 # 親テキストから復元できた
                                     elif ".pdf" in h.lower(): 
                                         t = "PDF資料"
-                                        score += 5 # タイトルなしPDF
+                                        score += 5 # タイトルなしPDFでも加点
                                     else:
-                                        continue
-                                else:
-                                    continue
+                                        score = -50 # 文字もなくPDFでもないなら価値なし
                             
-                            # 最もスコアが高いものを採用
+                            # 最高得点のリンクを更新
                             if score > max_score:
                                 max_score = score
                                 best_link = link
                                 best_title = t
-                                # PDFが見つかったら即決してもよいが、念のため最後まで見る
-                                if score >= 50: 
-                                    break 
                         
-                        if best_link and max_score > 0:
+                        # ループ終了後、最も良いリンクを採用 (スコアが0以上なら)
+                        if best_link and max_score >= 0:
                             url = urljoin(company["url"], best_link["href"])
                             if url not in processed_urls_local:
                                 all_items.append({
@@ -261,7 +258,7 @@ class NewsScraper:
                     found_date_str = f"{y}-{int(m):02d}-{int(d):02d}"
                     
                     if found_date_str == target_date_str:
-                        if company["id"] in ["life", "seven_2026", "seven_2025", "famima", "lawson", "ministop", "seven_sej_2026", "seven_sej_2025"]: continue
+                        if company["id"] in ["life", "seven_2026", "seven_2025", "famima", "lawson", "ministop", "ministop_2025", "seven_sej_2026", "seven_sej_2025"]: continue
                         debug_logs.append(f"★ MATCH: {found_date_str} in <{element.name}>")
                         link_tag = None
                         dt_node = None

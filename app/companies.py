@@ -14,9 +14,10 @@ COMPANIES = [
         "badge_color": "#EA5514",
         "date_format": "%Y年%m月%d日"
     },
+    # 【修正】URLを 2026.html に戻しました
     {
         "id": "seven_sej_2026", "name": "セブン-イレブン(2026)", "category": "コンビニ",
-        "url": "https://www.sej.co.jp/company/news_release/news/2026.html", # 元に戻しました
+        "url": "https://www.sej.co.jp/company/news_release/news/2026.html",
         "scraper_type": "auto",
         "badge_color": "#EA5514",
         "date_format": "%Y.%m.%d"
@@ -35,9 +36,17 @@ COMPANIES = [
         "badge_color": "#00A0E9",
         "date_format": "%Y年%m月%d日"
     },
+    # 【修正】ミニストップを2026(最新)と2025に分割
     {
-        "id": "ministop", "name": "ミニストップ", "category": "コンビニ",
+        "id": "ministop", "name": "ミニストップ(最新)", "category": "コンビニ",
         "url": "https://www.ministop.co.jp/corporate/release/",
+        "scraper_type": "auto",
+        "badge_color": "#FFD200",
+        "date_format": "%Y.%m.%d"
+    },
+    {
+        "id": "ministop_2025", "name": "ミニストップ(2025)", "category": "コンビニ",
+        "url": "https://www.ministop.co.jp/corporate/release/2025.html",
         "scraper_type": "auto",
         "badge_color": "#FFD200",
         "date_format": "%Y.%m.%d"
