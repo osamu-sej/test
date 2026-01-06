@@ -188,10 +188,9 @@ class NewsScraper:
                     found_count += 1
                     debug_logs.append(f"  -> Found (Life Best): {item['title'][:15]}...")
 
-            # --- セブン＆アイ専用ロジック (テキスト直撃サーチ＋Tweet除外版) ---
+            # --- セブン＆アイ専用ロジック (完成版：フィルター強化) ---
             elif company["id"] in ["seven_2026", "seven_2025"]:
                 
-                # 日付テキストを探す
                 date_pattern = re.compile(r"20\d{2}\s*[./年]\s*\d{1,2}\s*[./月]\s*\d{1,2}")
                 text_nodes = soup.find_all(string=date_pattern)
                 
@@ -208,28 +207,42 @@ class NewsScraper:
                     if found_date_str == target_date_str:
                         start_node = text_node.parent
                         
-                        # 候補となるリンクを周辺からかき集める
                         candidates = []
                         if start_node.name == 'a': candidates.append(start_node)
                         if start_node.parent:
                             candidates.extend(start_node.parent.find_all('a', href=True))
-                        # 少し先まで探す
-                        candidates.extend(start_node.find_all_next("a", href=True, limit=5))
+                        # 親の親まで範囲を広げる（これが重要）
+                        if start_node.parent and start_node.parent.parent:
+                            candidates.extend(start_node.parent.parent.find_all('a', href=True))
+                        
+                        candidates.extend(start_node.find_all_next("a", href=True, limit=10))
                         
                         valid_link = None
                         valid_title = ""
 
-                        # ★ここが新機能：候補の中から「Tweet」じゃないまともなリンクを選ぶ
                         for link in candidates:
                             t = link.get_text(strip=True)
                             h = link.get("href")
                             
-                            # ゴミ箱フィルター：SNSボタン系を除外
-                            if t in ["Tweet", "Share", "Facebook", "Line", "RSS", "クリップ"]: continue
+                            # ★ゴミ箱フィルター（ここを強化しました）
+                            if t in ["Tweet", "Share", "Facebook", "Line", "RSS", "クリップ", "ページ上部へ", "Page Top", "Top"]: continue
                             if "twitter.com" in h or "facebook.com" in h or "line.me" in h: continue
-                            if len(t) < 2: continue # 1文字のリンクなどは無視
+                            if "#top" in h: continue # ページ内リンクも除外
+                            
+                            # タイトル補完ロジック（文字がないPDFリンク対策）
+                            if len(t) < 2:
+                                if link.parent:
+                                    # 親要素のテキストを使ってみる
+                                    parent_text = link.parent.get_text(" ", strip=True)
+                                    # 親のテキストが「日付」を含んでいない、かつ長ければ採用
+                                    if len(parent_text) > 5 and found_date_str.replace("-", "年") not in parent_text: 
+                                        t = parent_text
+                                    elif ".pdf" in h:
+                                        t = "PDF資料（タイトル不明）"
+                                    else:
+                                        continue # それでもダメなら次へ
 
-                            # 合格！これを採用
+                            # 合格！
                             valid_link = link
                             valid_title = t
                             break
@@ -237,12 +250,6 @@ class NewsScraper:
                         if valid_link:
                             url = urljoin(company["url"], valid_link["href"])
                             
-                            # タイトル補完（もしリンクテキストが短すぎたら親のテキストを使う）
-                            if len(valid_title) < 5 and valid_link.parent:
-                                parent_text = valid_link.parent.get_text(" ", strip=True)
-                                if len(parent_text) > len(valid_title):
-                                    valid_title = parent_text
-
                             if url not in seven_processed_urls:
                                 all_items.append({
                                     "company_name": company["name"],
@@ -255,7 +262,7 @@ class NewsScraper:
                                 })
                                 seven_processed_urls.add(url)
                                 found_count += 1
-                                debug_logs.append(f"  -> Found (7&i Filtered): {valid_title[:15]}...")
+                                debug_logs.append(f"  -> Found (7&i Final): {valid_title[:15]}...")
                 
                 if found_count > 0:
                     continue
