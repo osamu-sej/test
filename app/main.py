@@ -29,14 +29,14 @@ class NewsScraper:
         })
 
     def _fallback_item(self, company, target_date_str, status_code=None):
+        # 403 Forbidden は「鍵付き」としてリンクを表示
         if status_code == 403:
             title = "🔒 公式サイトで最新ニュースを確認する"
             badge_color = "#3b82f6" 
             is_link_only = True
+        # 404 Not Found はこの関数に来る前に除外するので、ここには来ない想定だが念のため
         elif status_code == 404:
-            title = "【404】ページが見つかりません"
-            badge_color = company["badge_color"]
-            is_link_only = False
+            return None 
         else:
             code_str = f" ({status_code})" if status_code else ""
             title = f"【エラー】公式サイトを開く{code_str}"
@@ -67,7 +67,6 @@ class NewsScraper:
             checked_company_names.append(company["name"])
             debug_logs.append(f"--- Checking {company['name']} ---")
 
-            # 強制リンクモードの企業
             if company.get("scraper_type") == "force_link":
                 all_items.append({
                     "company_name": company["name"],
@@ -86,7 +85,12 @@ class NewsScraper:
                 resp = self.session.get(company["url"], timeout=10.0)
                 resp.encoding = resp.apparent_encoding
                 
-                if resp.status_code == 403:
+                if resp.status_code == 404:
+                    # ★修正：404の場合は画面に表示せず、ログだけ残してスルーする
+                    debug_logs.append(f"Status 404: Page not found. Skipped.")
+                    continue
+
+                elif resp.status_code == 403:
                     debug_logs.append("Status 403 (Access Denied). Fallback to link.")
                     all_items.append(self._fallback_item(company, target_date_str, 403))
                     continue
@@ -107,21 +111,15 @@ class NewsScraper:
 
             found_count = 0
             
-            # ==========================================
-            #  ここから専用ロジックエリア
-            # ==========================================
-
             # --- ライフ専用ロジック ---
             if company["id"] == "life":
                 life_dates = soup.find_all(string=re.compile(r"20\d{2}/\d{1,2}/\d{1,2}"))
                 candidates_map = {} 
-
                 for date_node in life_dates:
                     try:
                         date_text = date_node.strip()
                         y, m, d = re.split(r"[/]", date_text)
                         found_date_str = f"{y}-{int(m):02d}-{int(d):02d}"
-                        
                         if found_date_str == target_date_str:
                             card_node = date_node.parent
                             link_node = None
@@ -135,36 +133,23 @@ class NewsScraper:
                                     link_node = found_child_link
                                     break
                                 card_node = card_node.parent
-                            
                             if not link_node or not card_node: continue
-
                             raw_url = urljoin(company["url"], link_node['href'])
                             parsed = urlparse(raw_url)
                             clean_url = urlunparse((parsed.scheme, parsed.netloc, parsed.path, '', '', ''))
-
                             title_candidates = []
                             img = card_node.find('img', alt=True)
-                            if img and len(img['alt'].strip()) > 1:
-                                title_candidates.append(img['alt'].strip())
-                            
+                            if img and len(img['alt'].strip()) > 1: title_candidates.append(img['alt'].strip())
                             link_text = link_node.get_text(" ", strip=True)
-                            if len(link_text) > 1:
-                                title_candidates.append(link_text)
-                                
+                            if len(link_text) > 1: title_candidates.append(link_text)
                             card_full_text = card_node.get_text(" ", strip=True)
                             ignore_words = [date_text, "社会・環境", "商品・サービス", "新店・改装", "その他", "すべて", "NEW", "お知らせ", "ニュースリリース", "重要なお知らせ"]
-                            for w in ignore_words:
-                                card_full_text = card_full_text.replace(w, "")
+                            for w in ignore_words: card_full_text = card_full_text.replace(w, "")
                             clean_card_text = re.sub(r'\s+', ' ', card_full_text).strip()
-                            if len(clean_card_text) > 1:
-                                title_candidates.append(clean_card_text)
-
+                            if len(clean_card_text) > 1: title_candidates.append(clean_card_text)
                             best_title = ""
-                            if title_candidates:
-                                best_title = max(title_candidates, key=len)
-                            
+                            if title_candidates: best_title = max(title_candidates, key=len)
                             if not best_title: best_title = "【ライフ】ニュース詳細"
-
                             if clean_url not in candidates_map:
                                 candidates_map[clean_url] = {
                                     "company_name": company["name"],
@@ -178,18 +163,15 @@ class NewsScraper:
                             else:
                                 if len(best_title) > len(candidates_map[clean_url]["title"]):
                                     candidates_map[clean_url]["title"] = best_title
-
                     except Exception as e:
                         debug_logs.append(f"Life error: {e}")
                         continue
-                
                 for item in candidates_map.values():
                     all_items.append(item)
                     found_count += 1
                     debug_logs.append(f"  -> Found (Life Best): {item['title'][:15]}...")
 
-            # --- セブン＆アイ専用ロジック (親会社) ---
-            # ここは 7andi.com (ホールディングス) 用のロジックです
+            # --- セブン＆アイ専用ロジック ---
             elif company["id"] in ["seven_2026", "seven_2025"]:
                 main_area = None
                 possible_areas = [
@@ -246,7 +228,6 @@ class NewsScraper:
                             valid_link = link
                             valid_title = t
                             break
-                        
                         if valid_link:
                             url = urljoin(company["url"], valid_link["href"])
                             if url not in seven_processed_urls:
@@ -261,58 +242,39 @@ class NewsScraper:
                                 })
                                 seven_processed_urls.add(url)
                                 found_count += 1
-                                debug_logs.append(f"  -> Found (7&i HD Final): {valid_title[:15]}...")
+                                debug_logs.append(f"  -> Found (7&i Final): {valid_title[:15]}...")
                 if found_count > 0: continue
 
-            # --- ★ 新・強力テキスト検索ロジック (CVS連合：ファミマ、ローソン、ミニストップ、セブン-イレブン) ---
-            # ★ここに seven_sej_2026 と seven_sej_2025 を追加しました！
+            # --- ★ 新・強力テキスト検索ロジック (CVS連合) ---
             elif company["id"] in ["famima", "lawson", "ministop", "seven_sej_2026", "seven_sej_2025"]:
-                
-                # ページ内のあらゆる場所にある「日付テキスト」を全て探す
                 date_pattern = re.compile(r"20\d{2}\s*[./年]\s*\d{1,2}\s*[./月]\s*\d{1,2}")
                 text_nodes = soup.find_all(string=date_pattern)
-                
                 processed_urls_local = set()
                 
                 for text_node in text_nodes:
                     full_text = unicodedata.normalize("NFKC", text_node.strip())
                     match = re.search(r"(\d{4})\s*[./年]\s*(\d{1,2})\s*[./月]\s*(\d{1,2})", full_text)
                     if not match: continue
-                    
                     y, m, d = match.groups()
                     found_date_str = f"{y}-{int(m):02d}-{int(d):02d}"
                     
                     if found_date_str == target_date_str:
                         start_node = text_node.parent
                         link_tag = None
-                        
-                        # 1. 親がリンク
                         if start_node.name == 'a': link_tag = start_node
-                        # 2. 親要素内のリンク
-                        if not link_tag and start_node.parent:
-                            link_tag = start_node.parent.find('a', href=True)
-                        # 3. もう一つ上の親要素内のリンク (リスト構造対策)
-                        if not link_tag and start_node.parent and start_node.parent.parent:
-                            link_tag = start_node.parent.parent.find('a', href=True)
-                        # 4. 次の要素にあるリンク
-                        if not link_tag:
-                            link_tag = start_node.find_next("a", href=True)
+                        if not link_tag and start_node.parent: link_tag = start_node.parent.find('a', href=True)
+                        if not link_tag and start_node.parent and start_node.parent.parent: link_tag = start_node.parent.parent.find('a', href=True)
+                        if not link_tag: link_tag = start_node.find_next("a", href=True)
 
                         if link_tag and link_tag.get("href"):
                             url = urljoin(company["url"], link_tag["href"])
                             title = link_tag.get_text(strip=True)
-                            
-                            # タイトル補完 (リンク文字がない場合、親の文字を使う)
                             if not title or len(title) < 5:
                                 if link_tag.parent:
                                     parent_text = link_tag.parent.get_text(" ", strip=True)
-                                    # 日付文字を削除してタイトルにする
                                     clean_title = parent_text.replace(full_text, "").strip()
-                                    if len(clean_title) > 5:
-                                        title = clean_title
-                                    else:
-                                        title = "ニュース詳細"
-
+                                    if len(clean_title) > 5: title = clean_title
+                                    else: title = "ニュース詳細"
                             if url not in processed_urls_local:
                                 all_items.append({
                                     "company_name": company["name"],
@@ -326,64 +288,48 @@ class NewsScraper:
                                 processed_urls_local.add(url)
                                 found_count += 1
                                 debug_logs.append(f"  -> Found (CVS Strong): {title[:15]}...")
-                
                 if found_count > 0: continue
 
-            # --- 汎用ロジック (その他) ---
+            # --- 汎用ロジック ---
             if found_count == 0:
                 target_tags = soup.find_all(['dt', 'dd', 'li', 'div', 'p', 'span', 'time', 'td', 'tr'])
                 processed_urls = set()
-
                 for element in target_tags:
                     full_text = unicodedata.normalize("NFKC", element.get_text(" ", strip=True))
                     if len(full_text) > 500: continue 
-                    
                     match = re.search(r"(\d{4})\s*[./年]\s*(\d{1,2})\s*[./月]\s*(\d{1,2})", full_text)
                     if not match: continue
                     y, m, d = match.groups()
                     found_date_str = f"{y}-{int(m):02d}-{int(d):02d}"
                     
                     if found_date_str == target_date_str:
-                        # 専用ロジック済みの企業はスキップ
                         if company["id"] in ["life", "seven_2026", "seven_2025", "famima", "lawson", "ministop", "seven_sej_2026", "seven_sej_2025"]: continue
-
                         debug_logs.append(f"★ MATCH: {found_date_str} in <{element.name}>")
                         link_tag = None
-                        
                         dt_node = None
                         if element.name == 'dt': dt_node = element
                         elif element.parent and element.parent.name == 'dt': dt_node = element.parent
                         if dt_node:
                             dd_node = dt_node.find_next_sibling('dd')
                             if dd_node: link_tag = dd_node.find('a', href=True)
-                        
                         if not link_tag: link_tag = element.find('a', href=True)
-                        
                         if not link_tag:
                             curr = element
                             for _ in range(5):
                                 if not curr: break
-                                if curr.name == 'a' and curr.has_attr('href'):
-                                    link_tag = curr
-                                    break
+                                if curr.name == 'a' and curr.has_attr('href'): link_tag = curr; break
                                 if curr.name in ['li', 'tr', 'article', 'td'] or (curr.name=='div' and any(c in str(curr.get('class')) for c in ['item', 'news', 'col', 'block'])):
                                     links = curr.find_all("a", href=True)
                                     valid = [l for l in links if len(l.get_text(strip=True)) > 4]
-                                    if valid:
-                                        link_tag = max(valid, key=lambda l: len(l.get_text(strip=True)))
-                                        break
+                                    if valid: link_tag = max(valid, key=lambda l: len(l.get_text(strip=True))); break
                                 curr = curr.parent
-                        
                         if not link_tag: link_tag = element.find_next("a", href=True)
-
                         if link_tag and link_tag.get("href"):
                             title = link_tag.get_text(strip=True)
                             url = urljoin(company["url"], link_tag["href"])
-                            
                             if not title or len(title) < 5:
                                 parent_text = element.get_text(" ", strip=True)
                                 title = parent_text if len(parent_text) > 5 else "ニュース詳細"
-
                             if url not in processed_urls:
                                 all_items.append({
                                     "company_name": company["name"],
