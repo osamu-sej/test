@@ -38,8 +38,8 @@ COMPANIES = [
     },
     # 【修正】ミニストップを2026(最新)と2025に分割
     {
-        "id": "ministop", "name": "ミニストップ(最新)", "category": "コンビニ",
-        "url": "https://www.ministop.co.jp/corporate/release/",
+        "id": "ministop", "name": "ミニストップ(2026)", "category": "コンビニ",
+        "url": "https://www.ministop.co.jp/corporate/release/2026.html",
         "scraper_type": "auto",
         "badge_color": "#FFD200",
         "date_format": "%Y.%m.%d"

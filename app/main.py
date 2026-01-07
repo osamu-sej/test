@@ -30,7 +30,7 @@ class NewsScraper:
             badge_color = "#3b82f6" 
             is_link_only = True
         elif status_code == 404:
-            return None # 404は無視
+            return None 
         else:
             code_str = f" ({status_code})" if status_code else ""
             title = f"【エラー】公式サイトを開く{code_str}"
@@ -150,7 +150,6 @@ class NewsScraper:
                     debug_logs.append(f"  -> Found (Life Best): {item['title'][:15]}...")
 
             # --- ★ コンビニ共通 (採点方式V3: 確実性重視) ---
-            # 7andi, sej, famima, lawson, ministop 全てに対応
             elif company["id"] in ["seven_2026", "seven_2025", "seven_sej_2026", "seven_sej_2025", "famima", "lawson", "ministop", "ministop_2025"]:
                 
                 date_pattern = re.compile(r"20\d{2}\s*[./年]\s*\d{1,2}\s*[./月]\s*\d{1,2}")
@@ -158,7 +157,7 @@ class NewsScraper:
                 
                 processed_urls_local = set()
                 
-                # 絶対に除外したいワード (スコア -100)
+                # 絶対に除外したいワード
                 ban_words = ["ページ上部へ", "Page Top", "Top", "ニュースリリース", "一覧", "経営トップメッセージ"]
 
                 for text_node in text_nodes:
@@ -189,10 +188,9 @@ class NewsScraper:
                             score = 0
                             
                             # 1. 致命的な除外条件 (-100点)
-                            # 自分自身へのリンクは除外 (ミニストップ対策)
-                            if url.split('?')[0].rstrip('/') == company["url"].split('?')[0].rstrip('/'): score = -100 
+                            if url.split('?')[0].rstrip('/') == company["url"].split('?')[0].rstrip('/'): score = -100 # 自分自身へのリンク
                             if "twitter.com" in h or "facebook.com" in h: score = -100
-                            if "#top" in h or h == "#": score = -100
+                            if "#top" in h or h == "/" or h == "#": score = -100
                             for ban in ban_words:
                                 if ban in t: score = -100
                             
@@ -200,25 +198,24 @@ class NewsScraper:
 
                             # 2. 加点要素
                             if ".pdf" in h.lower(): score += 50  # PDFは最強
-                            if len(t) > 5: score += 10 # 文字数が多いと良い
+                            if len(t) > 2: score += 10 # 文字が少しでもあれば良い (以前は5文字以上だったのを緩和)
                             
-                            # タイトル整形 & 補完
+                            # タイトル整形
                             if len(t) < 5:
                                 if link.parent:
                                     parent_text = link.parent.get_text(" ", strip=True)
                                     parent_text = unicodedata.normalize("NFKC", parent_text)
-                                    # 日付文字列を削除
                                     parent_text = re.sub(r"20\d{2}\s*[./年]\s*\d{1,2}\s*[./月]\s*\d{1,2}\s*日?", "", parent_text)
                                     clean_title = parent_text.strip()
                                     
                                     if len(clean_title) > 3: 
                                         t = clean_title
-                                        score += 20 # 親テキストから復元できた
+                                        score += 20 
                                     elif ".pdf" in h.lower(): 
                                         t = "PDF資料"
-                                        score += 5 # タイトルなしPDFでも加点
+                                        score += 5 
                                     else:
-                                        score = -50 # 文字もなくPDFでもないなら価値なし
+                                        score = -50 
                             
                             # 最高得点のリンクを更新
                             if score > max_score:
