@@ -121,7 +121,7 @@ COMPANIES = [
     {
         "id": "sugi", "name": "スギ薬局(HD)", "category": "ドラッグストア",
         "url": "https://www.sugi-hd.co.jp/news/",
-        "scraper_type": "force_link",
+        "scraper_type": "auto",
         "badge_color": "#E60012",
         "date_format": "%Y.%m.%d"
     },
@@ -173,8 +173,8 @@ COMPANIES = [
     },
     {
         "id": "kirin", "name": "キリンHD", "category": "飲料",
-        "url": "https://www.kirinholdings.com/jp/newsroom/release/",
-        "scraper_type": "force_link",
+        "url": "https://www.kirinholdings.com/jp/newsroom/release/search/?sort=release&news=all&start=0&count=30&group=3&site=RD6IAML6&charset=utf-8",
+        "scraper_type": "auto",
         "badge_color": "#D9000D",
         "date_format": "%Y年%m月%d日"
     },
