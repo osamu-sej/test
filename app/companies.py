@@ -227,7 +227,7 @@ COMPANIES = [
         "url": "https://www.glico.com/jp/newscenter/",
         "scraper_type": "auto",
         "badge_color": "#E60012",
-        "date_format": "%Y.%m.%d"
+        "date_format": "%Y年%m月%d日"
     },
     {
         "id": "morinaga", "name": "森永製菓", "category": "お菓子",
