@@ -159,7 +159,7 @@ COMPANIES = [
     # --- 飲料メーカー ---
     {
         "id": "suntory", "name": "サントリー食品", "category": "飲料",
-        "url": "https://www.suntory.co.jp/softdrink/news/",
+        "url": "https://www.kirinholdings.com/jp/newsroom/release/search/?sort=release&news=all&start=0&count=30&group=3&site=RD6IAML6&charset=utf-8",
         "scraper_type": "auto",
         "badge_color": "#00AEEF",
         "date_format": "%Y年%m月%d日"
