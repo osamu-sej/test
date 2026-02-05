@@ -2,29 +2,670 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <title>AIニュースまとめ</title>
+  <title>コンビニニュースカレンダー</title>
   <style>
-    body { font-family: Arial, sans-serif; line-height: 1.6; margin: 40px; }
-    h1 { color: #333; }
-    article { margin-bottom: 24px; }
-    h2 { margin: 0 0 8px; }
+    :root {
+      color-scheme: light;
+      --bg: #f7f8fb;
+      --panel: #ffffff;
+      --border: #d7dce5;
+      --text: #1b2733;
+      --muted: #5e6a78;
+      --accent: #2c7be5;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: "Hiragino Sans", "Yu Gothic", "Noto Sans JP", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+    }
+
+    .layout {
+      display: flex;
+      gap: 24px;
+      padding: 24px;
+      width: 100%;
+    }
+
+    .calendar-panel,
+    .viewer-panel {
+      background: var(--panel);
+      border-radius: 16px;
+      padding: 24px;
+      box-shadow: 0 12px 32px rgba(15, 27, 46, 0.08);
+    }
+
+    .calendar-panel {
+      flex: 0 0 420px;
+      display: flex;
+      flex-direction: column;
+      max-height: calc(100vh - 48px);
+    }
+
+    .viewer-panel {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    h1 {
+      font-size: 1.6rem;
+      margin: 0 0 16px;
+      font-weight: 700;
+    }
+
+    .month-nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    .month-nav button {
+      appearance: none;
+      border: none;
+      background: var(--bg);
+      color: var(--text);
+      padding: 8px 12px;
+      border-radius: 999px;
+      cursor: pointer;
+      font-weight: 600;
+      transition: background 0.2s;
+    }
+
+    .month-nav button:hover { background: #e4e8f1; }
+
+    .month-label { font-weight: 700; font-size: 1.05rem; }
+
+    .calendar {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 6px;
+      margin-bottom: 16px;
+    }
+
+    .weekday {
+      font-size: 0.8rem;
+      text-align: center;
+      color: var(--muted);
+      font-weight: 600;
+      padding-bottom: 6px;
+    }
+
+    .day {
+      position: relative;
+      border: none;
+      background: transparent;
+      min-height: 64px;
+      border-radius: 12px;
+      padding: 6px;
+      text-align: left;
+      cursor: pointer;
+      font-size: 0.95rem;
+      transition: background 0.2s, transform 0.2s;
+    }
+
+    .day:disabled {
+      cursor: default;
+      color: #b2b9c6;
+    }
+
+    .day:not(:disabled):hover {
+      background: rgba(44, 123, 229, 0.1);
+      transform: translateY(-1px);
+    }
+
+    .day.selected {
+      outline: 2px solid var(--accent);
+      outline-offset: -2px;
+      background: rgba(44, 123, 229, 0.12);
+    }
+
+    .day-number {
+      font-weight: 600;
+      display: block;
+      margin-bottom: 6px;
+    }
+
+    .indicators {
+      display: flex;
+      gap: 4px;
+      flex-wrap: wrap;
+    }
+
+    .indicator {
+      width: 14px;
+      height: 14px;
+      border-radius: 4px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .legend {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin: 0 0 16px;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--bg);
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 0.85rem;
+    }
+
+    .legend-item img { width: 20px; height: 20px; border-radius: 50%; }
+
+    .summary-section {
+      margin-top: auto;
+      border-top: 1px solid var(--border);
+      padding-top: 16px;
+      overflow-y: auto;
+    }
+
+    .summary-section h2 {
+      font-size: 1rem;
+      margin: 0 0 10px;
+    }
+
+    .summary-group {
+      margin-bottom: 16px;
+    }
+
+    .summary-group:last-child { margin-bottom: 0; }
+
+    .summary-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.85rem;
+    }
+
+    .summary-table th,
+    .summary-table td {
+      padding: 6px 4px;
+      text-align: left;
+    }
+
+    .summary-table th {
+      color: var(--muted);
+      font-weight: 500;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .summary-table td { border-bottom: 1px solid #eef1f6; }
+
+    .summary-table tr:last-child td { border-bottom: none; }
+
+    .viewer-header {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .viewer-header img {
+      width: 48px;
+      height: 48px;
+    }
+
+    .viewer-header .meta {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .viewer-header .meta .chain {
+      font-size: 1rem;
+      font-weight: 700;
+    }
+
+    .viewer-header .meta .date {
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+
+    .viewer-header .meta .description {
+      color: var(--muted);
+      font-size: 0.85rem;
+      line-height: 1.4;
+    }
+
+    .release-list {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .release-list button {
+      border: 1px solid var(--border);
+      background: #f7f9fc;
+      color: var(--text);
+      border-radius: 10px;
+      padding: 8px 12px;
+      cursor: pointer;
+      font-size: 0.85rem;
+      transition: border 0.2s, background 0.2s;
+    }
+
+    .release-list button.active {
+      border-color: var(--accent);
+      background: rgba(44, 123, 229, 0.12);
+    }
+
+    .release-list button:hover { border-color: var(--accent); }
+
+    .pdf-viewer {
+      flex: 1;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      background: #fff;
+      min-height: 500px;
+    }
+
+    .pdf-viewer embed {
+      width: 100%;
+      height: 100%;
+      border: none;
+    }
+
+    @media (max-width: 1100px) {
+      body { display: block; }
+      .layout { flex-direction: column; }
+      .calendar-panel { flex: 1; max-height: none; }
+    }
   </style>
 </head>
 <body>
-  <h1>最新のAIニュース</h1>
-  <p>ここでは代表的なAI関連のニュースを分かりやすく紹介しています。</p>
-  <article>
-    <h2>OpenAIがGPT-4を公開</h2>
-    <p>OpenAIは2023年に新しい大規模言語モデルGPT-4を発表しました。従来よりも高精度な応答と幅広いタスクへの対応が可能になり、各方面で注目されています。</p>
-  </article>
-  <article>
-    <h2>Google、AI研究を強化</h2>
-    <p>GoogleはAI研究開発への投資を拡大し、生成AIをはじめとするさまざまな技術をサービスへ取り入れています。</p>
-  </article>
-  <article>
-    <h2>生成AIに関する規制議論</h2>
-    <p>世界各国で生成AIの倫理や法整備に関する議論が進んでいます。EUではAI規制法案が検討され、日本でもガイドライン策定が行われています。</p>
-  </article>
-  <p style="font-size:0.9em; color:#666;">※本ページの内容は2023年時点の情報を基に作成されており、最新の状況とは異なる場合があります。</p>
+  <div class="layout">
+    <aside class="calendar-panel">
+      <h1>コンビニニュースカレンダー</h1>
+      <div class="month-nav">
+        <button type="button" id="prevMonth">◀ 前の月</button>
+        <div class="month-label" id="monthLabel"></div>
+        <button type="button" id="nextMonth">次の月 ▶</button>
+      </div>
+      <div class="calendar" id="calendar">
+        <div class="weekday">日</div>
+        <div class="weekday">月</div>
+        <div class="weekday">火</div>
+        <div class="weekday">水</div>
+        <div class="weekday">木</div>
+        <div class="weekday">金</div>
+        <div class="weekday">土</div>
+      </div>
+      <div class="legend" id="legend"></div>
+      <div class="summary-section">
+        <div class="summary-group">
+          <h2 id="dailyTitle">日別リリース件数</h2>
+          <table class="summary-table" id="dailySummary"></table>
+        </div>
+        <div class="summary-group">
+          <h2 id="monthlyTitle">月別チェーン別件数</h2>
+          <table class="summary-table" id="monthlySummary"></table>
+        </div>
+      </div>
+    </aside>
+    <main class="viewer-panel">
+      <div class="viewer-header" id="viewerHeader">
+        <img id="viewerLogo" alt="チェーンロゴ">
+        <div class="meta">
+          <div class="chain" id="viewerChain"></div>
+          <div class="date" id="viewerDate"></div>
+          <div class="title" id="viewerTitle"></div>
+          <div class="description" id="viewerDescription"></div>
+        </div>
+      </div>
+      <div class="release-list" id="releaseList"></div>
+      <div class="pdf-viewer">
+        <embed id="pdfEmbed" type="application/pdf" title="リリースPDF">
+      </div>
+    </main>
+  </div>
+  <script>
+    const chainInfo = {
+      "セブン-イレブン": {
+        color: "#f5821f",
+        logo: `data:image/svg+xml;utf8,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><defs><radialGradient id="g" cx="0.5" cy="0.5" r="0.75"><stop offset="0%" stop-color="#fff"/><stop offset="100%" stop-color="#f5821f"/></radialGradient></defs><rect width="64" height="64" rx="12" fill="url(#g)"/><text x="50%" y="58%" font-size="30" text-anchor="middle" fill="#0b2b3c" font-family="Helvetica,Arial,sans-serif">7</text></svg>')}`
+      },
+      "ファミリーマート": {
+        color: "#009645",
+        logo: `data:image/svg+xml;utf8,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="12" fill="#009645"/><rect y="36" width="64" height="14" fill="#00a0e9"/><text x="50%" y="48%" font-size="18" text-anchor="middle" fill="#fff" font-family="Helvetica,Arial,sans-serif">Family</text></svg>')}`
+      },
+      "ローソン": {
+        color: "#005bac",
+        logo: `data:image/svg+xml;utf8,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="12" fill="#005bac"/><text x="50%" y="58%" font-size="22" font-weight="700" text-anchor="middle" fill="#fff" font-family="Helvetica,Arial,sans-serif">LAW</text></svg>')}`
+      }
+    };
+
+    const pdfReleases = [
+      {
+        id: "seven-0501",
+        title: "新作スイーツ特集",
+        date: "2024-05-01",
+        chain: "セブン-イレブン",
+        file: "seven-eleven.pdf",
+        description: "季節限定スイーツとキャンペーンのまとめ。"
+      },
+      {
+        id: "family-0505",
+        title: "おにぎりリニューアル",
+        date: "2024-05-05",
+        chain: "ファミリーマート",
+        file: "familymart.pdf",
+        description: "人気のおにぎりシリーズが新素材で登場。"
+      },
+      {
+        id: "seven-0508",
+        title: "惣菜コレクション",
+        date: "2024-05-08",
+        chain: "セブン-イレブン",
+        file: "seven-eleven.pdf",
+        description: "レンジ調理で便利な総菜の特集。"
+      },
+      {
+        id: "lawson-0510",
+        title: "からあげクン新味",
+        date: "2024-05-10",
+        chain: "ローソン",
+        file: "lawson.pdf",
+        description: "人気商品の新フレーバーリリース。"
+      },
+      {
+        id: "family-0510",
+        title: "スイーツニュース",
+        date: "2024-05-10",
+        chain: "ファミリーマート",
+        file: "familymart.pdf",
+        description: "ジェラートとスイーツフェア。"
+      },
+      {
+        id: "lawson-0518",
+        title: "コラボキャンペーン",
+        date: "2024-05-18",
+        chain: "ローソン",
+        file: "lawson.pdf",
+        description: "人気キャラクターとのタイアップ。"
+      },
+      {
+        id: "seven-0602",
+        title: "夏の冷やし麺",
+        date: "2024-06-02",
+        chain: "セブン-イレブン",
+        file: "seven-eleven-june.pdf",
+        description: "暑い日にぴったりの麺メニュー。"
+      },
+      {
+        id: "family-0607",
+        title: "ヘルシーサラダシリーズ",
+        date: "2024-06-07",
+        chain: "ファミリーマート",
+        file: "familymart-june.pdf",
+        description: "野菜たっぷりの新商品紹介。"
+      },
+      {
+        id: "lawson-0610",
+        title: "スイーツフェア",
+        date: "2024-06-10",
+        chain: "ローソン",
+        file: "lawson.pdf",
+        description: "初夏限定のスイーツ情報。"
+      },
+      {
+        id: "family-0612",
+        title: "地域限定メニュー",
+        date: "2024-06-12",
+        chain: "ファミリーマート",
+        file: "familymart-june.pdf",
+        description: "各地の名産を活かした商品を紹介。"
+      }
+    ];
+
+    const calendarEl = document.getElementById("calendar");
+    const monthLabelEl = document.getElementById("monthLabel");
+    const legendEl = document.getElementById("legend");
+    const dailySummaryEl = document.getElementById("dailySummary");
+    const monthlySummaryEl = document.getElementById("monthlySummary");
+    const dailyTitleEl = document.getElementById("dailyTitle");
+    const monthlyTitleEl = document.getElementById("monthlyTitle");
+    const releaseListEl = document.getElementById("releaseList");
+    const viewerChainEl = document.getElementById("viewerChain");
+    const viewerDateEl = document.getElementById("viewerDate");
+    const viewerTitleEl = document.getElementById("viewerTitle");
+    const viewerDescriptionEl = document.getElementById("viewerDescription");
+    const viewerLogoEl = document.getElementById("viewerLogo");
+    const pdfEmbedEl = document.getElementById("pdfEmbed");
+
+    let current = new Date();
+    current.setDate(1);
+    let selectedDate = null;
+    let selectedRelease = null;
+
+    const releasesByDate = pdfReleases.reduce((acc, release) => {
+      acc[release.date] = acc[release.date] || [];
+      acc[release.date].push(release);
+      return acc;
+    }, {});
+
+    function formatDateLabel(dateStr) {
+      const [year, month, day] = dateStr.split("-").map(Number);
+      return `${year}年${month}月${day}日`;
+    }
+
+    function renderLegend() {
+      legendEl.innerHTML = "";
+      Object.entries(chainInfo).forEach(([chain, info]) => {
+        const item = document.createElement("div");
+        item.className = "legend-item";
+        item.innerHTML = `<img src="${info.logo}" alt="${chain}"><span>${chain}</span>`;
+        legendEl.appendChild(item);
+      });
+    }
+
+    function buildIndicators(releases) {
+      const uniqueChains = Array.from(new Set(releases.map(r => r.chain)));
+      return uniqueChains.map(chain => {
+        const color = chainInfo[chain]?.color || "#999";
+        return `<span class="indicator" style="background:${color}" title="${chain}"></span>`;
+      }).join("");
+    }
+
+    function renderCalendar() {
+      monthLabelEl.textContent = `${current.getFullYear()}年 ${current.getMonth() + 1}月`;
+      const firstDay = new Date(current.getFullYear(), current.getMonth(), 1);
+      const startWeekday = firstDay.getDay();
+      const daysInMonth = new Date(current.getFullYear(), current.getMonth() + 1, 0).getDate();
+
+      while (calendarEl.children.length > 7) {
+        calendarEl.removeChild(calendarEl.lastElementChild);
+      }
+
+      for (let i = 0; i < startWeekday; i++) {
+        const placeholder = document.createElement('div');
+        calendarEl.appendChild(placeholder);
+      }
+
+      for (let day = 1; day <= daysInMonth; day++) {
+        const dateStr = `${current.getFullYear()}-${String(current.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+        const releases = releasesByDate[dateStr] || [];
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'day';
+        btn.dataset.date = dateStr;
+        btn.innerHTML = `<span class="day-number">${day}</span>` + (releases.length ? `<div class="indicators">${buildIndicators(releases)}</div>` : "");
+        if (!releases.length) {
+          btn.disabled = true;
+        }
+        if (selectedDate === dateStr) {
+          btn.classList.add('selected');
+        }
+        btn.addEventListener('click', () => selectDate(dateStr));
+        calendarEl.appendChild(btn);
+      }
+
+      updateMonthlySummary();
+    }
+
+    function updateMonthlySummary() {
+      const year = current.getFullYear();
+      const month = current.getMonth() + 1;
+      const keyPrefix = `${year}-${String(month).padStart(2, '0')}`;
+      const counts = {};
+      Object.keys(chainInfo).forEach(chain => { counts[chain] = 0; });
+      Object.entries(releasesByDate).forEach(([date, releases]) => {
+        if (date.startsWith(keyPrefix)) {
+          releases.forEach(release => {
+            counts[release.chain] = (counts[release.chain] || 0) + 1;
+          });
+        }
+      });
+
+      monthlyTitleEl.textContent = `${year}年${month}月 チェーン別件数`;
+      const total = Object.values(counts).reduce((sum, value) => sum + value, 0);
+      monthlySummaryEl.innerHTML = `<tr><th>チェーン</th><th style="text-align:right">件数</th></tr>` +
+        Object.entries(counts).map(([chain, count]) => {
+          return `<tr><td><span style="display:inline-flex;align-items:center;gap:6px;"><span style="width:12px;height:12px;border-radius:4px;background:${chainInfo[chain].color};"></span>${chain}</span></td><td style="text-align:right;font-weight:600;">${count}</td></tr>`;
+        }).join("") +
+        `<tr><td style="font-weight:700;">合計</td><td style="text-align:right;font-weight:700;">${total}</td></tr>`;
+    }
+
+    function updateDailySummary(dateStr) {
+      const releases = releasesByDate[dateStr] || [];
+      const counts = {};
+      Object.keys(chainInfo).forEach(chain => { counts[chain] = 0; });
+      releases.forEach(release => {
+        counts[release.chain] = (counts[release.chain] || 0) + 1;
+      });
+      dailyTitleEl.textContent = `${formatDateLabel(dateStr)} 日別リリース件数`;
+      const rows = Object.entries(counts).map(([chain, count]) => {
+        return `<tr><td><span style="display:inline-flex;align-items:center;gap:6px;"><span style="width:12px;height:12px;border-radius:4px;background:${chainInfo[chain].color};"></span>${chain}</span></td><td style="text-align:right;font-weight:600;">${count}</td></tr>`;
+      });
+      const total = releases.length;
+      dailySummaryEl.innerHTML = `<tr><th>チェーン</th><th style="text-align:right">件数</th></tr>${rows.join("")}<tr><td style="font-weight:700;">合計</td><td style="text-align:right;font-weight:700;">${total}</td></tr>`;
+    }
+
+    function selectDate(dateStr) {
+      selectedDate = dateStr;
+      const releases = releasesByDate[dateStr] || [];
+      selectedRelease = releases[0] || null;
+      updateDailySummary(dateStr);
+      renderCalendar();
+      renderReleaseList(releases);
+      if (selectedRelease) {
+        displayRelease(selectedRelease);
+      } else {
+        viewerChainEl.textContent = "";
+        viewerDateEl.textContent = "";
+        viewerTitleEl.textContent = "リリースを選択してください";
+        viewerDescriptionEl.textContent = "";
+        viewerLogoEl.src = "";
+        pdfEmbedEl.removeAttribute('src');
+      }
+    }
+
+    function renderReleaseList(releases) {
+      releaseListEl.innerHTML = "";
+      if (!releases.length) {
+        const empty = document.createElement('p');
+        empty.textContent = "この日に対応するPDFはありません";
+        empty.style.color = "var(--muted)";
+        releaseListEl.appendChild(empty);
+        return;
+      }
+      releases.forEach(release => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.textContent = `${release.chain}｜${release.title}`;
+        btn.classList.toggle('active', release.id === selectedRelease?.id);
+        btn.addEventListener('click', () => {
+          selectedRelease = release;
+          document.querySelectorAll('.release-list button').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          displayRelease(release);
+        });
+        releaseListEl.appendChild(btn);
+      });
+    }
+
+    function displayRelease(release) {
+      viewerChainEl.textContent = release.chain;
+      viewerDateEl.textContent = formatDateLabel(release.date);
+      viewerTitleEl.textContent = release.title;
+      viewerDescriptionEl.textContent = release.description || "";
+      viewerLogoEl.src = chainInfo[release.chain]?.logo || "";
+      const url = release.file;
+      pdfEmbedEl.src = url;
+    }
+
+    document.getElementById('prevMonth').addEventListener('click', () => {
+      current.setMonth(current.getMonth() - 1);
+      renderCalendar();
+      if (selectedDate && !selectedDate.startsWith(`${current.getFullYear()}-${String(current.getMonth()+1).padStart(2, '0')}`)) {
+        const firstAvailable = Object.keys(releasesByDate).find(date => date.startsWith(`${current.getFullYear()}-${String(current.getMonth()+1).padStart(2, '0')}`));
+        if (firstAvailable) {
+          selectDate(firstAvailable);
+        } else {
+          selectedDate = null;
+          updateDailySummary(`${current.getFullYear()}-${String(current.getMonth()+1).padStart(2, '0')}-01`);
+          releaseListEl.innerHTML = "";
+          viewerChainEl.textContent = "";
+          viewerDateEl.textContent = "";
+          viewerTitleEl.textContent = "リリースを選択してください";
+          viewerLogoEl.src = "";
+          pdfEmbedEl.removeAttribute('src');
+        }
+      }
+    });
+
+    document.getElementById('nextMonth').addEventListener('click', () => {
+      current.setMonth(current.getMonth() + 1);
+      renderCalendar();
+      if (selectedDate && !selectedDate.startsWith(`${current.getFullYear()}-${String(current.getMonth()+1).padStart(2, '0')}`)) {
+        const firstAvailable = Object.keys(releasesByDate).find(date => date.startsWith(`${current.getFullYear()}-${String(current.getMonth()+1).padStart(2, '0')}`));
+        if (firstAvailable) {
+          selectDate(firstAvailable);
+        } else {
+          selectedDate = null;
+          updateDailySummary(`${current.getFullYear()}-${String(current.getMonth()+1).padStart(2, '0')}-01`);
+          releaseListEl.innerHTML = "";
+          viewerChainEl.textContent = "";
+          viewerDateEl.textContent = "";
+          viewerTitleEl.textContent = "リリースを選択してください";
+          viewerLogoEl.src = "";
+          pdfEmbedEl.removeAttribute('src');
+        }
+      }
+    });
+
+    renderLegend();
+    renderCalendar();
+
+    const todayKey = new Date().toISOString().split('T')[0];
+    if (releasesByDate[todayKey]) {
+      selectDate(todayKey);
+    } else {
+      const firstDate = Object.keys(releasesByDate).sort()[0];
+      if (firstDate) {
+        const [year, month] = firstDate.split('-').map(Number);
+        current = new Date(year, month - 1, 1);
+        renderCalendar();
+        selectDate(firstDate);
+      }
+    }
+  </script>
 </body>
 </html>
