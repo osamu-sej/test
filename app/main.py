@@ -487,6 +487,7 @@ async def read_root(date: str = Query(None), companies: list[str] = Query(None))
             let currentFilterMode = 'category'; 
             let currentCategory = 'all';
             let currentSearchText = '';
+            let dashboardMonth = '';
 
             function filterNews(mode, value) {{
                 currentFilterMode = mode;
@@ -641,7 +642,10 @@ async def read_root(date: str = Query(None), companies: list[str] = Query(None))
             function toggleSummary() {{
                 const modal = document.getElementById('summary-modal');
                 if (modal.classList.contains('hidden')) {{
-                    calculateSummary(); 
+                    const now = new Date();
+                    dashboardMonth = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+                    calculateSummary(dashboardMonth);
+                    showSummaryView();
                     modal.classList.remove('hidden');
                     modal.classList.add('flex');
                 }} else {{
@@ -650,23 +654,20 @@ async def read_root(date: str = Query(None), companies: list[str] = Query(None))
                 }}
             }}
 
-            function calculateSummary() {{
+            function calculateSummary(monthPrefix) {{
+                if (monthPrefix) dashboardMonth = monthPrefix;
                 const cache = getCache();
-                const now = new Date();
-                const currentMonthPrefix = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
-                
+
                 const companyData = {{}};
                 let totalItems = 0;
 
                 Object.keys(cache).forEach(dateKey => {{
-                    if (dateKey.startsWith(currentMonthPrefix)) {{
+                    if (dateKey.startsWith(dashboardMonth)) {{
                         cache[dateKey].forEach(item => {{
-                            // ★ リンクのみ(1行表示)やエラーのものはカウントしない
                             if (item.is_link_only || item.is_error) return;
-
                             const name = item.company_name;
                             if (!companyData[name]) {{
-                                companyData[name] = {{ count: 0, dates: new Set() }};
+                                companyData[name] = {{ count: 0, dates: new Set(), badgeColor: item.badge_color }};
                             }}
                             companyData[name].count++;
                             companyData[name].dates.add(item.date);
@@ -679,12 +680,12 @@ async def read_root(date: str = Query(None), companies: list[str] = Query(None))
                 const list = document.getElementById('summary-list');
                 const totalEl = document.getElementById('summary-total');
                 const monthEl = document.getElementById('summary-month');
-                
-                monthEl.textContent = currentMonthPrefix;
+
+                monthEl.textContent = dashboardMonth;
                 totalEl.textContent = totalItems;
 
                 if (sorted.length === 0) {{
-                    list.innerHTML = '<div class="text-center text-slate-400 py-10">No data for this month yet.</div>';
+                    list.innerHTML = '<div class="text-center text-slate-400 py-10"><i class="fas fa-inbox text-3xl mb-3 block opacity-30"></i>この月のデータはありません</div>';
                     return;
                 }}
 
@@ -693,25 +694,24 @@ async def read_root(date: str = Query(None), companies: list[str] = Query(None))
                 list.innerHTML = sorted.map(([name, data], index) => {{
                     const percent = (data.count / maxCount) * 100;
                     const dateList = Array.from(data.dates)
-                        .map(d => parseInt(d.split('-')[2])) 
+                        .map(d => parseInt(d.split('-')[2]))
                         .sort((a, b) => a - b)
-                        .map(d => String(d).padStart(2, '0')) 
+                        .map(d => String(d).padStart(2, '0'))
                         .join(', ');
 
-                    let badgeColor = "#cbd5e1"; 
-                    for (const date in cache) {{
-                        const found = cache[date].find(i => i.company_name === name);
-                        if (found) {{ badgeColor = found.badge_color; break; }}
-                    }}
+                    const badgeColor = data.badgeColor || "#cbd5e1";
 
                     return `
-                    <div class="mb-5">
+                    <div class="mb-3 cursor-pointer hover:bg-blue-50 rounded-xl p-3 -mx-3 transition-all group" onclick="showCompanyDetail(decodeURIComponent('${{encodeURIComponent(name)}}'), '${{badgeColor}}')">
                         <div class="flex justify-between text-sm font-bold text-slate-700 mb-1">
                             <span class="flex items-center">
                                 <span class="w-3 h-3 rounded-full mr-2" style="background-color: ${{badgeColor}}"></span>
                                 ${{index + 1}}. ${{name}}
                             </span>
-                            <span>${{data.count}}件</span>
+                            <span class="flex items-center">
+                                ${{data.count}}件
+                                <i class="fas fa-chevron-right ml-2 text-xs text-slate-300 group-hover:text-blue-500 transition-colors"></i>
+                            </span>
                         </div>
                         <div class="w-full bg-slate-100 rounded-full h-2.5 mb-1">
                             <div class="bg-blue-500 h-2.5 rounded-full transition-all duration-500" style="width: ${{percent}}%"></div>
@@ -722,6 +722,62 @@ async def read_root(date: str = Query(None), companies: list[str] = Query(None))
                     </div>
                     `;
                 }}).join('');
+            }}
+
+            function shiftDashboardMonth(amount) {{
+                const parts = dashboardMonth.split('-');
+                const d = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1 + amount, 1);
+                dashboardMonth = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+                calculateSummary(dashboardMonth);
+                showSummaryView();
+            }}
+
+            function showSummaryView() {{
+                document.getElementById('dashboard-summary-view').classList.remove('hidden');
+                document.getElementById('dashboard-detail-view').classList.add('hidden');
+            }}
+
+            function showCompanyDetail(companyName, badgeColor) {{
+                const cache = getCache();
+                const items = [];
+                Object.keys(cache).forEach(dateKey => {{
+                    if (dateKey.startsWith(dashboardMonth)) {{
+                        cache[dateKey].forEach(item => {{
+                            if (item.company_name === companyName && !item.is_link_only && !item.is_error) {{
+                                items.push(item);
+                            }}
+                        }});
+                    }}
+                }});
+                items.sort((a, b) => new Date(a.date) - new Date(b.date));
+
+                document.getElementById('detail-company-name').textContent = companyName;
+                document.getElementById('detail-company-badge').style.backgroundColor = badgeColor;
+                document.getElementById('detail-month-display').textContent = dashboardMonth;
+                document.getElementById('detail-count').textContent = items.length + '件';
+
+                const list = document.getElementById('detail-news-list');
+                if (items.length === 0) {{
+                    list.innerHTML = '<div class="text-center text-slate-400 py-10"><i class="fas fa-inbox text-3xl mb-3 block opacity-30"></i>この月のニュースはありません</div>';
+                }} else {{
+                    list.innerHTML = items.map(item => {{
+                        return `
+                        <a href="${{item.url}}" target="_blank" class="block p-4 bg-white border border-slate-200 rounded-xl hover:border-blue-300 hover:shadow-md transition-all group">
+                            <div class="flex items-center justify-between mb-2">
+                                <span class="text-xs font-bold text-slate-400 bg-slate-100 px-2.5 py-1 rounded-full">
+                                    <i class="far fa-calendar-alt mr-1"></i>${{item.date}}
+                                </span>
+                                <i class="fas fa-external-link-alt text-slate-300 group-hover:text-blue-500 transition-colors"></i>
+                            </div>
+                            <h4 class="text-sm font-bold text-slate-700 group-hover:text-blue-600 transition-colors leading-relaxed">
+                                ${{item.title}}
+                            </h4>
+                        </a>`;
+                    }}).join('');
+                }}
+
+                document.getElementById('dashboard-summary-view').classList.add('hidden');
+                document.getElementById('dashboard-detail-view').classList.remove('hidden');
             }}
         </script>
     </head>
@@ -735,25 +791,55 @@ async def read_root(date: str = Query(None), companies: list[str] = Query(None))
 
         <div id="summary-modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 hidden items-center justify-center p-4" onclick="if(event.target === this) toggleSummary()">
             <div class="bg-white w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
-                <div class="p-5 bg-slate-50 border-b border-slate-200 flex justify-between items-center">
-                    <div>
-                        <h3 class="text-xl font-black text-slate-800"><i class="fas fa-chart-bar mr-2 text-blue-500"></i>Monthly Report</h3>
-                        <p class="text-xs text-slate-500 font-bold uppercase tracking-wider mt-1" id="summary-month">YYYY-MM</p>
+
+                <!-- Summary View -->
+                <div id="dashboard-summary-view">
+                    <div class="p-5 bg-slate-50 border-b border-slate-200 flex justify-between items-center">
+                        <div>
+                            <h3 class="text-xl font-black text-slate-800"><i class="fas fa-chart-bar mr-2 text-blue-500"></i>Monthly Report</h3>
+                            <div class="flex items-center mt-1">
+                                <button onclick="shiftDashboardMonth(-1)" class="text-slate-400 hover:text-blue-500 transition-colors px-2 py-1 rounded hover:bg-slate-200"><i class="fas fa-chevron-left text-xs"></i></button>
+                                <p class="text-sm text-slate-600 font-black tracking-wider mx-1 min-w-[5rem] text-center" id="summary-month">YYYY-MM</p>
+                                <button onclick="shiftDashboardMonth(1)" class="text-slate-400 hover:text-blue-500 transition-colors px-2 py-1 rounded hover:bg-slate-200"><i class="fas fa-chevron-right text-xs"></i></button>
+                            </div>
+                        </div>
+                        <button onclick="toggleSummary()" class="text-slate-400 hover:text-slate-600 transition-colors"><i class="fas fa-times text-2xl"></i></button>
                     </div>
-                    <button onclick="toggleSummary()" class="text-slate-400 hover:text-slate-600 transition-colors"><i class="fas fa-times text-2xl"></i></button>
+                    <div class="p-6 overflow-y-auto">
+                        <div class="flex items-center justify-center mb-8">
+                            <div class="text-center">
+                                <span class="block text-4xl font-black text-blue-600" id="summary-total">0</span>
+                                <span class="text-xs font-bold text-slate-400 uppercase tracking-widest">Total News</span>
+                            </div>
+                        </div>
+                        <div id="summary-list"></div>
+                    </div>
+                    <div class="p-4 bg-slate-50 border-t border-slate-200 text-center">
+                        <p class="text-xs text-slate-400">Based on collected cache data</p>
+                    </div>
                 </div>
-                <div class="p-6 overflow-y-auto">
-                    <div class="flex items-center justify-center mb-8">
-                        <div class="text-center">
-                            <span class="block text-4xl font-black text-blue-600" id="summary-total">0</span>
-                            <span class="text-xs font-bold text-slate-400 uppercase tracking-widest">Total News</span>
+
+                <!-- Detail View (hidden by default) -->
+                <div id="dashboard-detail-view" class="hidden">
+                    <div class="p-5 bg-slate-50 border-b border-slate-200">
+                        <div class="flex items-center justify-between">
+                            <button onclick="showSummaryView()" class="text-blue-500 hover:text-blue-700 transition-colors text-sm font-bold">
+                                <i class="fas fa-arrow-left mr-1"></i>戻る
+                            </button>
+                            <button onclick="toggleSummary()" class="text-slate-400 hover:text-slate-600 transition-colors"><i class="fas fa-times text-2xl"></i></button>
+                        </div>
+                        <div class="flex items-center mt-3">
+                            <span id="detail-company-badge" class="w-4 h-4 rounded-full mr-3 shadow-sm"></span>
+                            <h3 class="text-lg font-black text-slate-800" id="detail-company-name">Company</h3>
+                        </div>
+                        <div class="flex items-center justify-between mt-1">
+                            <p class="text-xs text-slate-500 font-bold" id="detail-month-display">YYYY-MM</p>
+                            <span class="text-xs font-bold text-blue-600" id="detail-count">0件</span>
                         </div>
                     </div>
-                    <div id="summary-list"></div>
+                    <div class="p-4 overflow-y-auto space-y-3" id="detail-news-list"></div>
                 </div>
-                <div class="p-4 bg-slate-50 border-t border-slate-200 text-center">
-                    <p class="text-xs text-slate-400">Based on collected cache data</p>
-                </div>
+
             </div>
         </div>
 
