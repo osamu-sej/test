@@ -343,7 +343,7 @@ async def read_root(date: str = Query(None), companies: list[str] = Query(None),
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Retail News Scout v3</title>
+        <title>Retail News Scout</title>
         <script src="https://cdn.tailwindcss.com"></script>
         <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;900&display=swap" rel="stylesheet">
@@ -801,7 +801,7 @@ async def read_root(date: str = Query(None), companies: list[str] = Query(None),
                 <div id="dashboard-summary-view">
                     <div class="p-5 bg-slate-50 border-b border-slate-200 flex justify-between items-center">
                         <div>
-                            <h3 class="text-xl font-black text-slate-800"><i class="fas fa-chart-bar mr-2 text-blue-500"></i>Monthly Report v3</h3>
+                            <h3 class="text-xl font-black text-slate-800"><i class="fas fa-chart-bar mr-2 text-blue-500"></i>Monthly Report</h3>
                             <div class="flex items-center mt-2 bg-white border border-slate-200 rounded-lg shadow-sm">
                                 <button onclick="shiftDashboardMonth(-1)" class="px-3 py-1.5 text-blue-600 hover:bg-blue-50 rounded-l-lg transition-colors font-bold text-sm"><i class="fas fa-chevron-left mr-1"></i>前月</button>
                                 <p class="text-sm text-slate-800 font-black tracking-wider px-3 py-1.5 border-x border-slate-200 min-w-[6rem] text-center" id="summary-month">YYYY-MM</p>
