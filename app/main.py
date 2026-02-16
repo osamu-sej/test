@@ -51,13 +51,13 @@ class NewsScraper:
             "is_error": True if status_code != 403 else False
         }
 
-    def fetch_news(self, company_ids, target_date_str):
-        target_date = datetime.strptime(target_date_str, "%Y-%m-%d")
+    def fetch_news(self, company_ids, start_date_str, end_date_str):
+        start_date = datetime.strptime(start_date_str, "%Y-%m-%d")
+        end_date = datetime.strptime(end_date_str, "%Y-%m-%d")
         all_items = []
         debug_logs = []
-        
-        # ★修正：ここが抜けていました！変数を初期化します
         checked_company_names = []
+        debug_logs.append(f"=== Range: {start_date_str} ~ {end_date_str} ===")
 
         for cid in company_ids:
             company = next((c for c in COMPANIES if c["id"] == cid), None)
@@ -73,7 +73,7 @@ class NewsScraper:
                     "badge_color": "#3b82f6",
                     "title": "👉 公式サイトで最新ニュースを見る",
                     "url": company["url"],
-                    "date": target_date_str,
+                    "date": start_date_str,
                     "is_link_only": True,
                     "is_error": False
                 })
@@ -90,11 +90,11 @@ class NewsScraper:
                     continue
                 elif resp.status_code == 403:
                     debug_logs.append("Status 403 (Access Denied). Fallback to link.")
-                    all_items.append(self._fallback_item(company, target_date_str, 403))
+                    all_items.append(self._fallback_item(company, start_date_str, 403))
                     continue
                 elif resp.status_code != 200:
                     debug_logs.append(f"Error Status: {resp.status_code}")
-                    all_items.append(self._fallback_item(company, target_date_str, resp.status_code))
+                    all_items.append(self._fallback_item(company, start_date_str, resp.status_code))
                     continue
                 else:
                     html_content = resp.text
@@ -103,7 +103,7 @@ class NewsScraper:
                 
             except Exception as exc:
                 debug_logs.append(f"Exception: {exc}")
-                all_items.append(self._fallback_item(company, target_date_str))
+                all_items.append(self._fallback_item(company, start_date_str))
                 continue
 
             found_count = 0
@@ -117,7 +117,7 @@ class NewsScraper:
                         date_text = date_node.strip()
                         y, m, d = re.split(r"[/]", date_text)
                         found_date_str = f"{y}-{int(m):02d}-{int(d):02d}"
-                        if found_date_str == target_date_str:
+                        if start_date_str <= found_date_str <= end_date_str:
                             card_node = date_node.parent
                             link_node = None
                             for _ in range(5):
@@ -198,7 +198,7 @@ class NewsScraper:
                     y, m, d = match.groups()
                     found_date_str = f"{y}-{int(m):02d}-{int(d):02d}"
                     
-                    if found_date_str == target_date_str:
+                    if start_date_str <= found_date_str <= end_date_str:
                         if company["id"] == "life": continue # ライフは済んでいるのでスキップ
 
                         debug_logs.append(f"★ MATCH: {found_date_str} in <{element.name}>")
@@ -307,14 +307,16 @@ def generate_sidebar_html(selected_ids):
     return html
 
 @app.get("/", response_class=HTMLResponse)
-async def read_root(date: str = Query(None), companies: list[str] = Query(None), response: Response = None):
+async def read_root(start_date: str = Query(None), end_date: str = Query(None), companies: list[str] = Query(None), response: Response = None):
     today = datetime.now()
     # 初期状態は全選択
     selected_ids = companies if companies else [c["id"] for c in COMPANIES]
-    
-    target_date_str = date if date else today.strftime("%Y-%m-%d")
 
-    items, logs, checked_names = NewsScraper().fetch_news(selected_ids, target_date_str)
+    today_str = today.strftime("%Y-%m-%d")
+    start_date_str = start_date if start_date else today_str
+    end_date_str = end_date if end_date else today_str
+
+    items, logs, checked_names = NewsScraper().fetch_news(selected_ids, start_date_str, end_date_str)
     
     sidebar_html = generate_sidebar_html(selected_ids)
     items_json = json.dumps(items, ensure_ascii=False)
@@ -388,24 +390,60 @@ async def read_root(date: str = Query(None), companies: list[str] = Query(None),
                 return data ? JSON.parse(data) : {{}};
             }}
 
-            function shiftDate(amount) {{
-                const input = document.getElementById('dateInput');
-                if(!input.value) return;
-                const parts = input.value.split('-');
-                const d = new Date(parts[0], parts[1] - 1, parts[2]);
-                d.setDate(d.getDate() + amount);
-                
+            function formatDate(d) {{
                 const y = d.getFullYear();
                 const m = String(d.getMonth() + 1).padStart(2, '0');
                 const day = String(d.getDate()).padStart(2, '0');
-                input.value = `${{y}}-${{m}}-${{day}}`;
-                renderFromCacheOnly(input.value);
+                return `${{y}}-${{m}}-${{day}}`;
+            }}
+
+            function parseDate(str) {{
+                const parts = str.split('-');
+                return new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+            }}
+
+            function shiftRange(amount) {{
+                const startInput = document.getElementById('startDateInput');
+                const endInput = document.getElementById('endDateInput');
+                if (!startInput.value || !endInput.value) return;
+                const s = parseDate(startInput.value);
+                const e = parseDate(endInput.value);
+                const rangeDays = Math.round((e - s) / (1000 * 60 * 60 * 24)) + 1;
+                const shift = amount * rangeDays;
+                s.setDate(s.getDate() + shift);
+                e.setDate(e.getDate() + shift);
+                startInput.value = formatDate(s);
+                endInput.value = formatDate(e);
+                renderFromCacheRange();
+            }}
+
+            function setQuickRange(mode) {{
+                const today = new Date();
+                const todayStr = formatDate(today);
+                const startInput = document.getElementById('startDateInput');
+                const endInput = document.getElementById('endDateInput');
+                if (mode === 'today') {{
+                    startInput.value = todayStr;
+                    endInput.value = todayStr;
+                }} else if (mode === 'week') {{
+                    const weekAgo = new Date(today);
+                    weekAgo.setDate(weekAgo.getDate() - 6);
+                    startInput.value = formatDate(weekAgo);
+                    endInput.value = todayStr;
+                }} else if (mode === 'month') {{
+                    const monthAgo = new Date(today);
+                    monthAgo.setDate(monthAgo.getDate() - 29);
+                    startInput.value = formatDate(monthAgo);
+                    endInput.value = todayStr;
+                }}
+                renderFromCacheRange();
             }}
 
             document.addEventListener('DOMContentLoaded', function() {{
                 const form = document.querySelector('form');
                 const loader = document.getElementById('loading-overlay');
-                const dateInput = document.getElementById('dateInput');
+                const startInput = document.getElementById('startDateInput');
+                const endInput = document.getElementById('endDateInput');
                 const searchInput = document.getElementById('keywordInput');
 
                 if(form && loader) {{
@@ -414,59 +452,99 @@ async def read_root(date: str = Query(None), companies: list[str] = Query(None),
                         loader.classList.add('flex');
                     }});
                 }}
-                
-                const SERVER_RESULTS = {items_json}; 
-                const CHECKED_NAMES = {checked_names_json}; 
-                const CURRENT_DATE = "{target_date_str}";
-                
-                updateCacheAndRender(CURRENT_DATE, SERVER_RESULTS, CHECKED_NAMES);
 
-                dateInput.addEventListener('change', function(e) {{
-                    const newDate = e.target.value;
-                    renderFromCacheOnly(newDate); 
-                }});
-                
+                const SERVER_RESULTS = {items_json};
+                const CHECKED_NAMES = {checked_names_json};
+                const START_DATE = "{start_date_str}";
+                const END_DATE = "{end_date_str}";
+
+                updateCacheAndRender(START_DATE, END_DATE, SERVER_RESULTS, CHECKED_NAMES);
+
+                startInput.addEventListener('change', function() {{ renderFromCacheRange(); }});
+                endInput.addEventListener('change', function() {{ renderFromCacheRange(); }});
+
                 searchInput.addEventListener('input', function(e) {{
                     const keyword = e.target.value;
-                    filterNews('search', keyword); 
+                    filterNews('search', keyword);
                 }});
             }});
 
-            function setDateAndShow(dateStr) {{
-                document.getElementById('dateInput').value = dateStr;
-                renderFromCacheOnly(dateStr);
-            }}
-
-            function updateCacheAndRender(dateKey, newItems, checkedNames) {{
+            function updateCacheAndRender(startDate, endDate, newItems, checkedNames) {{
                 let cache = getCache();
-                let dateItems = cache[dateKey] || [];
-                
-                if (checkedNames && checkedNames.length > 0) {{
-                    const checkedSet = new Set(checkedNames);
-                    dateItems = dateItems.filter(item => !checkedSet.has(item.company_name));
-                }}
 
+                // Group new items by their date
+                const byDate = {{}};
                 if (newItems && newItems.length > 0) {{
                     newItems.forEach(item => {{
+                        const dk = item.date || startDate;
+                        if (!byDate[dk]) byDate[dk] = [];
+                        byDate[dk].push(item);
+                    }});
+                }}
+
+                // Update cache for each date that has new items
+                const checkedSet = (checkedNames && checkedNames.length > 0) ? new Set(checkedNames) : null;
+
+                // For dates in range, clear checked companies and merge new items
+                const s = parseDate(startDate);
+                const e = parseDate(endDate);
+                for (let d = new Date(s); d <= e; d.setDate(d.getDate() + 1)) {{
+                    const dk = formatDate(d);
+                    let dateItems = cache[dk] || [];
+
+                    if (checkedSet) {{
+                        dateItems = dateItems.filter(item => !checkedSet.has(item.company_name));
+                    }}
+
+                    const newDateItems = byDate[dk] || [];
+                    newDateItems.forEach(item => {{
                         if (!dateItems.some(saved => saved.url === item.url)) {{
                             dateItems.push(item);
                         }}
                     }});
+
+                    cache[dk] = dateItems;
                 }}
-                
-                cache[dateKey] = dateItems;
+
                 localStorage.setItem(STORAGE_KEY, JSON.stringify(cache));
-                renderGrid(dateItems, dateKey);
+                renderFromCacheRange();
             }}
 
-            function renderFromCacheOnly(dateKey) {{
-                let cache = getCache();
-                let dateItems = cache[dateKey] || [];
+            function getDateRange() {{
+                const startDate = document.getElementById('startDateInput').value;
+                const endDate = document.getElementById('endDateInput').value;
+                return {{ startDate, endDate }};
+            }}
+
+            function collectItemsInRange(startDate, endDate) {{
+                const cache = getCache();
+                let allItems = [];
+                const s = parseDate(startDate);
+                const e = parseDate(endDate);
+                for (let d = new Date(s); d <= e; d.setDate(d.getDate() + 1)) {{
+                    const dk = formatDate(d);
+                    const dateItems = cache[dk] || [];
+                    allItems = allItems.concat(dateItems);
+                }}
+                // Deduplicate by URL
+                const seen = new Set();
+                allItems = allItems.filter(item => {{
+                    if (seen.has(item.url)) return false;
+                    seen.add(item.url);
+                    return true;
+                }});
+                allItems.sort((a, b) => new Date(b.date) - new Date(a.date));
+                return allItems;
+            }}
+
+            function renderFromCacheRange() {{
+                const {{ startDate, endDate }} = getDateRange();
                 const kw = document.getElementById('keywordInput').value;
-                if(kw) {{
+                if (kw) {{
                     filterNews('search', kw);
                 }} else {{
-                    renderGrid(dateItems, dateKey);
+                    const items = collectItemsInRange(startDate, endDate);
+                    renderGrid(items, startDate, endDate);
                 }}
             }}
             
@@ -475,9 +553,7 @@ async def read_root(date: str = Query(None), companies: list[str] = Query(None),
                 if (cache[dateKey]) {{
                     cache[dateKey] = cache[dateKey].filter(item => item.url !== url);
                     localStorage.setItem(STORAGE_KEY, JSON.stringify(cache));
-                    const kw = document.getElementById('keywordInput').value;
-                    if(kw) filterNews('search', kw);
-                    else renderGrid(cache[dateKey], dateKey);
+                    renderFromCacheRange();
                 }}
             }}
 
@@ -496,18 +572,16 @@ async def read_root(date: str = Query(None), companies: list[str] = Query(None),
 
             function filterNews(mode, value) {{
                 currentFilterMode = mode;
-                const dateKey = document.getElementById('dateInput').value;
+                const {{ startDate, endDate }} = getDateRange();
                 let itemsToDisplay = [];
                 const cache = getCache();
 
                 if (mode === 'search') {{
                     currentSearchText = value;
                     if (currentSearchText) {{
-                        const currentMonthPrefix = dateKey.substring(0, 7);
+                        // Search across all cached data
                         Object.keys(cache).forEach(key => {{
-                            if (key.startsWith(currentMonthPrefix)) {{
-                                itemsToDisplay = itemsToDisplay.concat(cache[key]);
-                            }}
+                            itemsToDisplay = itemsToDisplay.concat(cache[key]);
                         }});
                         const seen = new Set();
                         itemsToDisplay = itemsToDisplay.filter(item => {{
@@ -518,7 +592,7 @@ async def read_root(date: str = Query(None), companies: list[str] = Query(None),
                         itemsToDisplay.sort((a, b) => new Date(b.date) - new Date(a.date));
                         document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));
                     }} else {{
-                        itemsToDisplay = cache[dateKey] || [];
+                        itemsToDisplay = collectItemsInRange(startDate, endDate);
                     }}
                 }} else if (mode === 'category') {{
                     currentCategory = value;
@@ -526,9 +600,9 @@ async def read_root(date: str = Query(None), companies: list[str] = Query(None),
                     document.getElementById('keywordInput').value = '';
                     document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));
                     document.getElementById('btn-' + value).classList.add('active');
-                    itemsToDisplay = cache[dateKey] || [];
+                    itemsToDisplay = collectItemsInRange(startDate, endDate);
                 }}
-                renderGrid(itemsToDisplay, dateKey);
+                renderGrid(itemsToDisplay, startDate, endDate);
             }}
 
             function checkFilter(title) {{
@@ -548,17 +622,21 @@ async def read_root(date: str = Query(None), companies: list[str] = Query(None),
                 return text.replace(regex, '<mark>$1</mark>');
             }}
 
-            function renderGrid(items, displayDate) {{
+            function renderGrid(items, startDate, endDate) {{
                 const gridContainer = document.getElementById('result-grid');
                 const linkContainer = document.getElementById('link-only-container');
                 const countBadge = document.getElementById('result-count');
                 const emptyMsg = document.getElementById('empty-message');
                 const dateDisplay = document.getElementById('display-date-str');
-                
-                if(dateDisplay) dateDisplay.textContent = 'Target: ' + displayDate;
-                if (currentFilterMode === 'search' && currentSearchText) {{
-                    const currentMonthPrefix = displayDate.substring(0, 7);
-                    dateDisplay.textContent = 'Search: ' + currentMonthPrefix + ' (Cached)';
+
+                if (dateDisplay) {{
+                    if (currentFilterMode === 'search' && currentSearchText) {{
+                        dateDisplay.textContent = 'Search: all cached data';
+                    }} else if (startDate === endDate) {{
+                        dateDisplay.textContent = 'Target: ' + startDate;
+                    }} else {{
+                        dateDisplay.textContent = 'Range: ' + startDate + ' ~ ' + (endDate || startDate);
+                    }}
                 }}
 
                 const filteredItems = items.filter(item => checkFilter(item.title));
@@ -863,12 +941,23 @@ async def read_root(date: str = Query(None), companies: list[str] = Query(None),
 
                 <form id="searchForm" action="/" method="get" class="flex-1 p-6 space-y-8 flex flex-col">
                     <div>
-                        <label class="block text-xs font-black text-slate-400 uppercase tracking-widest mb-3">Target Date</label>
-                        <input type="date" id="dateInput" name="date" value="{target_date_str}" class="w-full border-2 border-slate-200 rounded-xl p-3 font-bold text-slate-700 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all shadow-sm mb-3">
-                        <div class="flex items-center gap-2">
-                            <button type="button" onclick="shiftDate(-1)" class="flex-1 py-2 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 text-slate-600 shadow-sm transition-all active:scale-95"><i class="fas fa-chevron-left"></i></button>
-                            <button type="button" onclick="setDateAndShow('{today.strftime('%Y-%m-%d')}')" class="px-4 py-2 bg-slate-100 text-slate-600 rounded-lg text-xs font-bold hover:bg-slate-200 transition-colors">Today</button>
-                            <button type="button" onclick="shiftDate(1)" class="flex-1 py-2 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 text-slate-600 shadow-sm transition-all active:scale-95"><i class="fas fa-chevron-right"></i></button>
+                        <label class="block text-xs font-black text-slate-400 uppercase tracking-widest mb-3">Date Range</label>
+                        <div class="space-y-2">
+                            <div class="flex items-center gap-2">
+                                <span class="text-xs font-bold text-slate-500 w-8">From</span>
+                                <input type="date" id="startDateInput" name="start_date" value="{start_date_str}" class="flex-1 border-2 border-slate-200 rounded-xl p-2.5 font-bold text-slate-700 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all shadow-sm">
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <span class="text-xs font-bold text-slate-500 w-8">To</span>
+                                <input type="date" id="endDateInput" name="end_date" value="{end_date_str}" class="flex-1 border-2 border-slate-200 rounded-xl p-2.5 font-bold text-slate-700 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all shadow-sm">
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-2 mt-3">
+                            <button type="button" onclick="shiftRange(-1)" class="flex-1 py-2 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 text-slate-600 shadow-sm transition-all active:scale-95"><i class="fas fa-chevron-left"></i></button>
+                            <button type="button" onclick="setQuickRange('today')" class="px-3 py-2 bg-slate-100 text-slate-600 rounded-lg text-xs font-bold hover:bg-slate-200 transition-colors">Today</button>
+                            <button type="button" onclick="setQuickRange('week')" class="px-3 py-2 bg-slate-100 text-slate-600 rounded-lg text-xs font-bold hover:bg-slate-200 transition-colors">1W</button>
+                            <button type="button" onclick="setQuickRange('month')" class="px-3 py-2 bg-slate-100 text-slate-600 rounded-lg text-xs font-bold hover:bg-slate-200 transition-colors">1M</button>
+                            <button type="button" onclick="shiftRange(1)" class="flex-1 py-2 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 text-slate-600 shadow-sm transition-all active:scale-95"><i class="fas fa-chevron-right"></i></button>
                         </div>
                     </div>
 
@@ -907,7 +996,7 @@ async def read_root(date: str = Query(None), companies: list[str] = Query(None),
                             <h2 class="text-3xl font-black text-slate-900 tracking-tight">Search Results</h2>
                             <div class="flex items-center mt-2 text-slate-500 font-medium">
                                 <i class="far fa-clock mr-2"></i>
-                                <span id="display-date-str">Target: {target_date_str}</span>
+                                <span id="display-date-str">Range: {start_date_str} ~ {end_date_str}</span>
                             </div>
                         </div>
                         <span id="result-count" class="bg-blue-100 text-blue-700 font-bold px-4 py-2 rounded-full text-sm shadow-sm">Loading...</span>
