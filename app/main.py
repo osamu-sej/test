@@ -6,7 +6,7 @@ from urllib.parse import urljoin, urlparse, urlunparse
 import time
 import requests
 from bs4 import BeautifulSoup
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, Response
 from fastapi.responses import HTMLResponse
 
 # companies.py から設定を読み込む
@@ -307,7 +307,7 @@ def generate_sidebar_html(selected_ids):
     return html
 
 @app.get("/", response_class=HTMLResponse)
-async def read_root(date: str = Query(None), companies: list[str] = Query(None)):
+async def read_root(date: str = Query(None), companies: list[str] = Query(None), response: Response = None):
     today = datetime.now()
     # 初期状態は全選択
     selected_ids = companies if companies else [c["id"] for c in COMPANIES]
@@ -331,6 +331,11 @@ async def read_root(date: str = Query(None), companies: list[str] = Query(None))
         </details>
     </div>
     """
+
+    if response:
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
 
     return f"""
     <!DOCTYPE html>
