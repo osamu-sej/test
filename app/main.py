@@ -191,27 +191,31 @@ class NewsScraper:
 
                 for element in target_tags:
                     full_text = unicodedata.normalize("NFKC", element.get_text(" ", strip=True))
-                    if len(full_text) > 500: continue 
-                    
+                    if len(full_text) > 500: continue
+
+                    # 複数の日付を含む要素はコンテナ（複数ニュースの親要素）なのでスキップ
+                    all_date_matches = re.findall(r"\d{4}\s*[./年]\s*\d{1,2}\s*[./月]\s*\d{1,2}", full_text)
+                    if len(all_date_matches) > 1: continue
+
                     match = re.search(r"(\d{4})\s*[./年]\s*(\d{1,2})\s*[./月]\s*(\d{1,2})", full_text)
                     if not match: continue
                     y, m, d = match.groups()
                     found_date_str = f"{y}-{int(m):02d}-{int(d):02d}"
-                    
+
                     if start_date_str <= found_date_str <= end_date_str:
                         if company["id"] == "life": continue # ライフは済んでいるのでスキップ
 
                         debug_logs.append(f"★ MATCH: {found_date_str} in <{element.name}>")
                         link_tag = None
-                        
+
                         # 1. dtなら隣のddを見る (よくあるパターン)
                         if element.name == 'dt':
                             dd_node = element.find_next_sibling('dd')
                             if dd_node: link_tag = dd_node.find('a', href=True)
-                        
+
                         # 2. 自分自身の中にリンクがあるか
                         if not link_tag: link_tag = element.find('a', href=True)
-                        
+
                         # 3. 親や兄弟を探す (少し範囲を広げる)
                         if not link_tag:
                             curr = element
@@ -220,6 +224,12 @@ class NewsScraper:
                                 if curr.name == 'a' and curr.has_attr('href'):
                                     link_tag = curr
                                     break
+                                # 親要素が複数日付を含む場合はコンテナなので探索を中止
+                                if curr != element:
+                                    parent_text = unicodedata.normalize("NFKC", curr.get_text(" ", strip=True))
+                                    parent_dates = re.findall(r"\d{4}\s*[./年]\s*\d{1,2}\s*[./月]\s*\d{1,2}", parent_text)
+                                    if len(parent_dates) > 1:
+                                        break
                                 # 親の要素内にある他のリンクを探す（行全体がリンクになっていない場合など）
                                 if curr.name in ['li', 'tr', 'article', 'td'] or (curr.name=='div' and any(c in str(curr.get('class')) for c in ['item', 'news', 'col', 'block'])):
                                     links = curr.find_all("a", href=True)
@@ -229,14 +239,11 @@ class NewsScraper:
                                         link_tag = max(valid, key=lambda l: len(l.get_text(strip=True)))
                                         break
                                 curr = curr.parent
-                        
-                        # 4. それでもなければ、直後のリンクを拾う
-                        if not link_tag: link_tag = element.find_next("a", href=True)
 
                         if link_tag and link_tag.get("href"):
                             title = link_tag.get_text(strip=True)
                             url = urljoin(company["url"], link_tag["href"])
-                            
+
                             # タイトル補完 (リンク自体に文字がない場合、親要素のテキストを使う)
                             if not title or len(title) < 5:
                                 if link_tag.parent:
