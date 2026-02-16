@@ -702,15 +702,15 @@ async def read_root(date: str = Query(None), companies: list[str] = Query(None))
                     const badgeColor = data.badgeColor || "#cbd5e1";
 
                     return `
-                    <div class="mb-3 cursor-pointer hover:bg-blue-50 rounded-xl p-3 -mx-3 transition-all group" onclick="showCompanyDetail(decodeURIComponent('${{encodeURIComponent(name)}}'), '${{badgeColor}}')">
+                    <div class="mb-3 cursor-pointer hover:bg-blue-50 rounded-xl p-3 -mx-3 transition-all group border border-transparent hover:border-blue-200 hover:shadow-sm" onclick="showCompanyDetail(decodeURIComponent('${{encodeURIComponent(name)}}'), '${{badgeColor}}')">
                         <div class="flex justify-between text-sm font-bold text-slate-700 mb-1">
                             <span class="flex items-center">
                                 <span class="w-3 h-3 rounded-full mr-2" style="background-color: ${{badgeColor}}"></span>
                                 ${{index + 1}}. ${{name}}
                             </span>
-                            <span class="flex items-center">
+                            <span class="flex items-center text-blue-500">
                                 ${{data.count}}件
-                                <i class="fas fa-chevron-right ml-2 text-xs text-slate-300 group-hover:text-blue-500 transition-colors"></i>
+                                <i class="fas fa-chevron-right ml-2 text-sm"></i>
                             </span>
                         </div>
                         <div class="w-full bg-slate-100 rounded-full h-2.5 mb-1">
@@ -797,10 +797,10 @@ async def read_root(date: str = Query(None), companies: list[str] = Query(None))
                     <div class="p-5 bg-slate-50 border-b border-slate-200 flex justify-between items-center">
                         <div>
                             <h3 class="text-xl font-black text-slate-800"><i class="fas fa-chart-bar mr-2 text-blue-500"></i>Monthly Report</h3>
-                            <div class="flex items-center mt-1">
-                                <button onclick="shiftDashboardMonth(-1)" class="text-slate-400 hover:text-blue-500 transition-colors px-2 py-1 rounded hover:bg-slate-200"><i class="fas fa-chevron-left text-xs"></i></button>
-                                <p class="text-sm text-slate-600 font-black tracking-wider mx-1 min-w-[5rem] text-center" id="summary-month">YYYY-MM</p>
-                                <button onclick="shiftDashboardMonth(1)" class="text-slate-400 hover:text-blue-500 transition-colors px-2 py-1 rounded hover:bg-slate-200"><i class="fas fa-chevron-right text-xs"></i></button>
+                            <div class="flex items-center mt-2 bg-white border border-slate-200 rounded-lg shadow-sm">
+                                <button onclick="shiftDashboardMonth(-1)" class="px-3 py-1.5 text-blue-600 hover:bg-blue-50 rounded-l-lg transition-colors font-bold text-sm"><i class="fas fa-chevron-left mr-1"></i>前月</button>
+                                <p class="text-sm text-slate-800 font-black tracking-wider px-3 py-1.5 border-x border-slate-200 min-w-[6rem] text-center" id="summary-month">YYYY-MM</p>
+                                <button onclick="shiftDashboardMonth(1)" class="px-3 py-1.5 text-blue-600 hover:bg-blue-50 rounded-r-lg transition-colors font-bold text-sm">次月<i class="fas fa-chevron-right ml-1"></i></button>
                             </div>
                         </div>
                         <button onclick="toggleSummary()" class="text-slate-400 hover:text-slate-600 transition-colors"><i class="fas fa-times text-2xl"></i></button>
