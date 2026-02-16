@@ -1,0 +1,11 @@
+{
+  "recommendations": [
+    "ms-python.python",
+    "ms-python.pylance",
+    "ms-python.black-formatter",
+    "ms-python.flake8",
+    "charliermarsh.ruff",
+    "tamasfe.even-better-toml",
+    "rangav.vscode-thunder-client"
+  ]
+}
