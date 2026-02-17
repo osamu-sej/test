@@ -880,7 +880,7 @@ async def read_root(start_date: str = Query(None), end_date: str = Query(None), 
         </div>
 
         <div id="summary-modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 hidden items-center justify-center p-4" onclick="if(event.target === this) toggleSummary()">
-            <div class="bg-white w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div class="bg-white w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col h-[90vh]">
 
                 <!-- Summary View -->
                 <div id="dashboard-summary-view" class="flex flex-col min-h-0 flex-1">
