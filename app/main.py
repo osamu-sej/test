@@ -883,8 +883,8 @@ async def read_root(start_date: str = Query(None), end_date: str = Query(None), 
             <div class="bg-white w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
 
                 <!-- Summary View -->
-                <div id="dashboard-summary-view">
-                    <div class="p-5 bg-slate-50 border-b border-slate-200 flex justify-between items-center">
+                <div id="dashboard-summary-view" class="flex flex-col min-h-0 flex-1">
+                    <div class="p-5 bg-slate-50 border-b border-slate-200 flex justify-between items-center shrink-0">
                         <div>
                             <h3 class="text-xl font-black text-slate-800"><i class="fas fa-chart-bar mr-2 text-blue-500"></i>Monthly Report</h3>
                             <div class="flex items-center mt-2 bg-white border border-slate-200 rounded-lg shadow-sm">
@@ -895,7 +895,7 @@ async def read_root(start_date: str = Query(None), end_date: str = Query(None), 
                         </div>
                         <button onclick="toggleSummary()" class="text-slate-400 hover:text-slate-600 transition-colors"><i class="fas fa-times text-2xl"></i></button>
                     </div>
-                    <div class="p-6 overflow-y-auto">
+                    <div class="p-6 overflow-y-auto flex-1 min-h-0">
                         <div class="flex items-center justify-center mb-8">
                             <div class="text-center">
                                 <span class="block text-4xl font-black text-blue-600" id="summary-total">0</span>
@@ -904,14 +904,14 @@ async def read_root(start_date: str = Query(None), end_date: str = Query(None), 
                         </div>
                         <div id="summary-list"></div>
                     </div>
-                    <div class="p-4 bg-slate-50 border-t border-slate-200 text-center">
+                    <div class="p-4 bg-slate-50 border-t border-slate-200 text-center shrink-0">
                         <p class="text-xs text-slate-400">Based on collected cache data</p>
                     </div>
                 </div>
 
                 <!-- Detail View (hidden by default) -->
-                <div id="dashboard-detail-view" class="hidden">
-                    <div class="p-5 bg-slate-50 border-b border-slate-200">
+                <div id="dashboard-detail-view" class="hidden flex flex-col min-h-0 flex-1">
+                    <div class="p-5 bg-slate-50 border-b border-slate-200 shrink-0">
                         <div class="flex items-center justify-between">
                             <button onclick="showSummaryView()" class="text-blue-500 hover:text-blue-700 transition-colors text-sm font-bold">
                                 <i class="fas fa-arrow-left mr-1"></i>戻る
@@ -927,7 +927,7 @@ async def read_root(start_date: str = Query(None), end_date: str = Query(None), 
                             <span class="text-xs font-bold text-blue-600" id="detail-count">0件</span>
                         </div>
                     </div>
-                    <div class="p-4 overflow-y-auto space-y-3" id="detail-news-list"></div>
+                    <div class="p-4 overflow-y-auto flex-1 min-h-0 space-y-3" id="detail-news-list"></div>
                 </div>
 
             </div>
