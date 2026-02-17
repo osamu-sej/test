@@ -384,6 +384,19 @@ async def read_root(start_date: str = Query(None), end_date: str = Query(None), 
                 padding: 0 2px;
                 border-radius: 2px;
             }}
+            #summary-modal > div {{
+                max-height: 90vh;
+                display: flex;
+                flex-direction: column;
+            }}
+            #summary-scroll-area {{
+                max-height: calc(90vh - 12rem);
+                overflow-y: auto !important;
+            }}
+            #detail-news-list {{
+                max-height: calc(90vh - 10rem);
+                overflow-y: auto !important;
+            }}
         </style>
         <script>
             function toggleCategory(source, cls) {{
@@ -895,7 +908,7 @@ async def read_root(start_date: str = Query(None), end_date: str = Query(None), 
                         </div>
                         <button onclick="toggleSummary()" class="text-slate-400 hover:text-slate-600 transition-colors"><i class="fas fa-times text-2xl"></i></button>
                     </div>
-                    <div class="p-6 overflow-y-auto" style="max-height: calc(90vh - 12rem);">
+                    <div id="summary-scroll-area" class="p-6">
                         <div class="flex items-center justify-center mb-8">
                             <div class="text-center">
                                 <span class="block text-4xl font-black text-blue-600" id="summary-total">0</span>
@@ -927,7 +940,7 @@ async def read_root(start_date: str = Query(None), end_date: str = Query(None), 
                             <span class="text-xs font-bold text-blue-600" id="detail-count">0件</span>
                         </div>
                     </div>
-                    <div class="p-4 overflow-y-auto space-y-3" id="detail-news-list" style="max-height: calc(90vh - 10rem);"></div>
+                    <div class="p-4 space-y-3" id="detail-news-list"></div>
                 </div>
 
             </div>
