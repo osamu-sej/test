@@ -12,7 +12,10 @@ from fastapi.responses import HTMLResponse
 # companies.py から設定を読み込む
 from .companies import COMPANIES
 
-app = FastAPI(title="Retail News Scout")
+# アプリのバージョン。改修のたびに更新する(画面左下・X-App-Version ヘッダー・/docs に表示される)
+APP_VERSION = "1.1.0"
+
+app = FastAPI(title="Retail News Scout", version=APP_VERSION)
 
 # 日付抽出用の正規表現(要素ごとに再コンパイルしないよう事前コンパイル)
 DATE_FLEX_FINDALL_RE = re.compile(r"\d{4}\s*[./年]\s*\d{1,2}\s*[./月]\s*\d{1,2}")
@@ -393,6 +396,7 @@ def read_root(start_date: str = Query(None), end_date: str = Query(None), compan
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
+        response.headers["X-App-Version"] = APP_VERSION
 
     return f"""
     <!DOCTYPE html>
@@ -998,7 +1002,7 @@ def read_root(start_date: str = Query(None), end_date: str = Query(None), compan
             <aside class="w-80 bg-white border-r border-slate-200 overflow-y-auto flex flex-col shadow-sm z-20">
                 <div class="p-6 bg-slate-900 text-white sticky top-0 z-10">
                     <h1 class="text-2xl font-black tracking-tighter flex items-center"><i class="fas fa-bolt mr-3 text-yellow-400"></i>NEWS SCOUT</h1>
-                    <p class="text-slate-400 text-xs mt-1 font-medium tracking-widest">RETAIL INTELLIGENCE</p>
+                    <p class="text-slate-400 text-xs mt-1 font-medium tracking-widest flex items-center justify-between">RETAIL INTELLIGENCE<span class="ml-2 px-1.5 py-0.5 bg-slate-700 text-slate-300 rounded text-[10px] font-mono tracking-normal" title="アプリのバージョン">v{APP_VERSION}</span></p>
                 </div>
                 
                 <div class="px-6 pt-6">
