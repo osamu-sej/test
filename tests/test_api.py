@@ -20,13 +20,14 @@ def test_root_returns_html():
 
 
 def test_root_with_date_param():
-    """GET /?date=2025-10-25 passes the date and returns HTML."""
+    """GET /?start_date=...&end_date=... passes the range and returns HTML."""
     with patch("app.main.NewsScraper.fetch_news", return_value=([], [], [])) as mock_fetch:
-        response = client.get("/?date=2025-10-25")
+        response = client.get("/?start_date=2025-10-25&end_date=2025-10-26")
     assert response.status_code == 200
     mock_fetch.assert_called_once()
     args = mock_fetch.call_args
     assert args[0][1] == "2025-10-25"
+    assert args[0][2] == "2025-10-26"
 
 
 def test_root_with_companies_param():
