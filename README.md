@@ -22,7 +22,7 @@ GitHub Codespaces では同梱の devcontainer が依存関係を自動インス
 | `app/service.py` | 収集オーケストレーション(SQLite キャッシュの鮮度判断) |
 | `app/storage.py` | SQLite 永続化層(ニュース履歴と収集記録) |
 | `app/scheduler.py` | 定時自動収集(バックグラウンドスレッド) |
-| `app/companies.py` | 収集対象企業(コンビニ / スーパー / ドラッグストア / ディスカウント / 飲料 / お菓子 / 冷凍食品)の定義 |
+| `app/companies.py` | 収集対象(コンビニ / スーパー / ドラッグストア / ディスカウント / 飲料 / お菓子 / 冷凍食品 / 行政・団体 / 物流 / 外食 / 決済・IT)の定義 |
 | `app/templates/` `app/static/` | 画面テンプレート(Jinja2)と JS/CSS |
 | `tests/` | API・キャッシュ層のテスト |
 
