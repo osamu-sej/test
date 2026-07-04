@@ -3,6 +3,101 @@ function toggleCategory(source, cls) {
 }
 
 const STORAGE_KEY = 'retail_news_date_cache_v1';
+const BOOKMARK_KEY = 'retail_news_bookmarks_v1';
+const READ_KEY = 'retail_news_read_v1';
+
+// 直近 renderGrid で表示した(フィルタ適用後の)項目。CSV エクスポートが使う
+let lastRenderedItems = [];
+
+// ===== サイドバー開閉(モバイル用) =====
+const SIDEBAR_MOBILE_OPEN = ['flex', 'fixed', 'inset-y-0', 'left-0', 'z-40', 'shadow-2xl'];
+function toggleSidebar() {
+    const sb = document.getElementById('sidebar');
+    if (!sb) return;
+    if (sb.classList.contains('fixed')) {
+        sb.classList.remove(...SIDEBAR_MOBILE_OPEN);
+        sb.classList.add('hidden');
+    } else {
+        sb.classList.remove('hidden');
+        sb.classList.add(...SIDEBAR_MOBILE_OPEN);
+    }
+}
+
+// ===== ブックマーク・既読 =====
+function getBookmarks() {
+    const data = localStorage.getItem(BOOKMARK_KEY);
+    return data ? JSON.parse(data) : {};
+}
+
+function isBookmarked(url) {
+    return !!getBookmarks()[url];
+}
+
+function toggleBookmark(url) {
+    const bookmarks = getBookmarks();
+    if (bookmarks[url]) {
+        delete bookmarks[url];
+    } else {
+        const item = lastRenderedItems.find(i => i.url === url) ||
+            Object.values(getCache()).flat().find(i => i.url === url);
+        if (!item) return;
+        bookmarks[url] = {
+            company_name: item.company_name,
+            badge_color: item.badge_color,
+            title: item.title,
+            url: item.url,
+            date: item.date,
+            is_link_only: false,
+            is_error: false,
+            added_at: Date.now(),
+        };
+    }
+    localStorage.setItem(BOOKMARK_KEY, JSON.stringify(bookmarks));
+    // 現在の表示を維持したまま再描画(ブックマーク表示中なら一覧から消える)
+    if (currentFilterMode === 'bookmarks') {
+        filterNews('bookmarks', '');
+    } else {
+        renderGrid(lastRenderedSource, ...Object.values(getDateRange()));
+    }
+}
+
+function getReadSet() {
+    const data = localStorage.getItem(READ_KEY);
+    return data ? JSON.parse(data) : {};
+}
+
+function markRead(el, url) {
+    const read = getReadSet();
+    if (!read[url]) {
+        read[url] = Date.now();
+        localStorage.setItem(READ_KEY, JSON.stringify(read));
+    }
+    const card = el.closest('.news-card');
+    if (card) card.classList.add('opacity-55');
+}
+
+// ===== CSV エクスポート(表示中の項目) =====
+function exportCsv() {
+    const items = lastRenderedItems || [];
+    if (!items.length) {
+        alert('エクスポートする表示中のニュースがありません。');
+        return;
+    }
+    const q = v => '"' + String(v ?? '').replace(/"/g, '""') + '"';
+    const rows = [['日付', '企業', 'タイトル', 'URL'].map(q).join(',')];
+    items.forEach(i => rows.push([q(i.date), q(i.company_name), q(i.title), q(i.url)].join(',')));
+    // 先頭の BOM で Excel でも文字化けせずに開ける
+    const blob = new Blob(['\uFEFF' + rows.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    const { startDate, endDate } = getDateRange();
+    a.download = `retail_news_${startDate}_${endDate}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+}
+
+// renderGrid に渡された(フィルタ前の)元データ。ブックマーク切替後の再描画に使う
+let lastRenderedSource = [];
 
 // スクレイピングで取得した外部由来のテキストを innerHTML に入れる前のエスケープ
 function esc(s) {
@@ -230,11 +325,21 @@ function filterNews(mode, value) {
         document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));
         document.getElementById('btn-' + value).classList.add('active');
         itemsToDisplay = collectItemsInRange(startDate, endDate);
+    } else if (mode === 'bookmarks') {
+        currentSearchText = '';
+        document.getElementById('keywordInput').value = '';
+        document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));
+        document.getElementById('btn-bookmarks').classList.add('active');
+        itemsToDisplay = Object.values(getBookmarks());
+        itemsToDisplay.sort((a, b) => new Date(b.date) - new Date(a.date));
     }
     renderGrid(itemsToDisplay, startDate, endDate);
 }
 
 function checkFilter(title) {
+    if (currentFilterMode === 'bookmarks') {
+        return true;
+    }
     if (currentFilterMode === 'search') {
         if (!currentSearchText) return true;
         return title.toLowerCase().includes(currentSearchText.toLowerCase());
@@ -260,8 +365,12 @@ function renderGrid(items, startDate, endDate) {
     const emptyMsg = document.getElementById('empty-message');
     const dateDisplay = document.getElementById('display-date-str');
 
+    lastRenderedSource = items;
+
     if (dateDisplay) {
-        if (currentFilterMode === 'search' && currentSearchText) {
+        if (currentFilterMode === 'bookmarks') {
+            dateDisplay.textContent = 'Bookmarks: 保存したニュース';
+        } else if (currentFilterMode === 'search' && currentSearchText) {
             dateDisplay.textContent = 'Search: all cached data';
         } else if (startDate === endDate) {
             dateDisplay.textContent = 'Target: ' + startDate;
@@ -271,6 +380,7 @@ function renderGrid(items, startDate, endDate) {
     }
 
     const filteredItems = items.filter(item => checkFilter(item.title));
+    lastRenderedItems = filteredItems;
 
     if (!filteredItems || filteredItems.length === 0) {
         gridContainer.innerHTML = '';
@@ -290,8 +400,12 @@ function renderGrid(items, startDate, endDate) {
 
     const linkOnlyItems = filteredItems.filter(i => i.is_link_only);
     const cardItems = filteredItems.filter(i => !i.is_link_only);
+    const bookmarks = getBookmarks();
+    const readSet = getReadSet();
 
     gridContainer.innerHTML = cardItems.map(item => {
+        const bookmarked = !!bookmarks[item.url];
+        const isRead = !!readSet[item.url];
         let bgClass = "bg-white";
         let textClass = "text-slate-800";
         if (item.is_error) {
@@ -308,7 +422,7 @@ function renderGrid(items, startDate, endDate) {
             displayTitle = highlightText(displayTitle, currentSearchText);
         }
         return `
-        <div class="relative ${bgClass} p-6 rounded-xl shadow-md border-t-4 hover:-translate-y-1 hover:shadow-lg transition-all duration-200 ease-out group flex flex-col h-full news-card" style="border-color: ${esc(item.badge_color)}">
+        <div class="relative ${bgClass} ${isRead ? 'opacity-55' : ''} p-6 rounded-xl shadow-md border-t-4 hover:-translate-y-1 hover:shadow-lg transition-all duration-200 ease-out group flex flex-col h-full news-card" style="border-color: ${esc(item.badge_color)}">
             <div class="flex items-center justify-between mb-4">
                 <div class="flex items-center">
                     <img src="https://www.google.com/s2/favicons?domain=${esc(item.url)}&sz=32" alt="ロゴ" class="w-5 h-5 mr-3 rounded-full shadow-sm bg-white p-0.5 opacity-80">
@@ -316,7 +430,7 @@ function renderGrid(items, startDate, endDate) {
                 </div>
                 <span class="text-xs font-medium text-slate-400 bg-slate-100 px-2 py-1 rounded-full whitespace-nowrap"><i class="far fa-calendar-alt mr-1"></i>${esc(item.date)}</span>
             </div>
-            <a href="${esc(item.url)}" target="_blank" class="block flex-1 flex flex-col group-hover:opacity-100">
+            <a href="${esc(item.url)}" target="_blank" onclick="markRead(this, decodeURIComponent('${encodeURIComponent(item.url)}'))" class="block flex-1 flex flex-col group-hover:opacity-100">
                 <h3 class="text-lg font-bold ${textClass} leading-snug group-hover:text-blue-600 transition-colors flex-grow">
                     ${displayTitle}
                 </h3>
@@ -324,6 +438,7 @@ function renderGrid(items, startDate, endDate) {
                     <span>Read Article</span><i class="fas fa-arrow-right ml-2"></i>
                 </div>
             </a>
+            <button onclick="toggleBookmark(decodeURIComponent('${encodeURIComponent(item.url)}'))" class="absolute top-2 right-9 ${bookmarked ? 'text-amber-400 opacity-100' : 'text-slate-200 opacity-0 group-hover:opacity-100'} hover:text-amber-500 transition-opacity p-1 bookmark-btn" title="${bookmarked ? 'ブックマーク解除' : 'ブックマーク'}"><i class="fas fa-star"></i></button>
             <button onclick="deleteItem('${esc(item.date)}', decodeURIComponent('${encodeURIComponent(item.url)}'))" class="absolute top-2 right-2 text-slate-200 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity p-1" title="削除"><i class="fas fa-times-circle"></i></button>
         </div>`;
     }).join('');

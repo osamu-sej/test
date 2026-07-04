@@ -18,10 +18,33 @@ from . import ai, scheduler, service, storage
 from .scraper import NewsScraper  # noqa: F401
 
 # アプリのバージョン。改修のたびに更新する(画面左下・X-App-Version ヘッダー・/docs に表示される)
-APP_VERSION = "1.4.0"
+APP_VERSION = "1.5.0"
 
 # AI ダイジェストのキャッシュ有効期間(秒)
 DIGEST_CACHE_TTL = 1800
+
+# 情報源の「新着停止」警告: 直近 ACTIVE_WINDOW 日以内に実績があるのに
+# WARN_DAYS 日を超えて新着ゼロの情報源を、サイト構造変更の可能性として警告する
+STALE_WARN_DAYS = 7
+STALE_ACTIVE_WINDOW_DAYS = 60
+
+
+def _stale_source_warnings(selected_ids, today):
+    company_map = {c["id"]: c for c in COMPANIES}
+    normal_ids = [
+        cid for cid in selected_ids
+        if cid in company_map and company_map[cid].get("scraper_type") != "force_link"
+    ]
+    warnings = []
+    for cid, last_date in storage.last_item_dates(normal_ids).items():
+        try:
+            days = (today - datetime.strptime(last_date, "%Y-%m-%d")).days
+        except (ValueError, TypeError):
+            continue
+        if STALE_WARN_DAYS < days <= STALE_ACTIVE_WINDOW_DAYS:
+            warnings.append({"name": company_map[cid]["name"], "days": days})
+    warnings.sort(key=lambda w: -w["days"])
+    return warnings
 
 
 @asynccontextmanager
@@ -93,7 +116,8 @@ def read_root(request: Request, start_date: str = Query(None), end_date: str = Q
     # 同期関数にすることで FastAPI がスレッドプール上で実行し、
     # スクレイピング中もイベントループが他のリクエストを処理できる
 
-    today_str = datetime.now().strftime("%Y-%m-%d")
+    today = datetime.now()
+    today_str = today.strftime("%Y-%m-%d")
     # 初期状態は全選択
     selected_ids = companies if companies else [c["id"] for c in COMPANIES]
 
@@ -120,6 +144,7 @@ def read_root(request: Request, start_date: str = Query(None), end_date: str = Q
             "logs": logs,
             "last_collected": last_collected_str,
             "ai_enabled": ai.is_enabled(),
+            "stale_warnings": _stale_source_warnings(selected_ids, today),
         },
         headers={
             "Cache-Control": "no-cache, no-store, must-revalidate",
