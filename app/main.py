@@ -1,5 +1,6 @@
 import json
 import re
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 
@@ -10,13 +11,25 @@ from fastapi.templating import Jinja2Templates
 
 # companies.py から設定を読み込む
 from .companies import COMPANIES
-# スクレイピングロジックは app/scraper.py に分離
-from .scraper import NewsScraper
+# 収集はサービス層(SQLite キャッシュ+スクレイパー)経由で行う
+from . import scheduler, service, storage
+# NewsScraper はテスト(patch)や既存コードからの参照互換のため re-export
+from .scraper import NewsScraper  # noqa: F401
 
 # アプリのバージョン。改修のたびに更新する(画面左下・X-App-Version ヘッダー・/docs に表示される)
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.2.0"
 
-app = FastAPI(title="Retail News Scout", version=APP_VERSION)
+
+@asynccontextmanager
+async def lifespan(_app):
+    storage.init()
+    scheduler_stop = scheduler.start()
+    yield
+    if scheduler_stop:
+        scheduler_stop.set()
+
+
+app = FastAPI(title="Retail News Scout", version=APP_VERSION, lifespan=lifespan)
 
 BASE_DIR = Path(__file__).resolve().parent
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
@@ -72,7 +85,7 @@ def generate_sidebar_html(selected_ids):
 
 
 @app.get("/", response_class=HTMLResponse)
-def read_root(request: Request, start_date: str = Query(None), end_date: str = Query(None), companies: list[str] = Query(None)):
+def read_root(request: Request, start_date: str = Query(None), end_date: str = Query(None), companies: list[str] = Query(None), force: str = Query(None)):
     # 同期関数にすることで FastAPI がスレッドプール上で実行し、
     # スクレイピング中もイベントループが他のリクエストを処理できる
 
@@ -83,7 +96,12 @@ def read_root(request: Request, start_date: str = Query(None), end_date: str = Q
     start_date_str = start_date if start_date and DATE_PARAM_RE.match(start_date) else today_str
     end_date_str = end_date if end_date and DATE_PARAM_RE.match(end_date) else today_str
 
-    items, logs, checked_names = NewsScraper().fetch_news(selected_ids, start_date_str, end_date_str)
+    items, logs, checked_names, last_collected = service.get_news(
+        selected_ids, start_date_str, end_date_str, force=(force == "1")
+    )
+    last_collected_str = (
+        datetime.fromtimestamp(last_collected).strftime("%m/%d %H:%M") if last_collected else None
+    )
 
     return templates.TemplateResponse(
         request=request,
@@ -96,6 +114,7 @@ def read_root(request: Request, start_date: str = Query(None), end_date: str = Q
             "items_json": script_safe_json(items),
             "checked_names_json": script_safe_json(checked_names),
             "logs": logs,
+            "last_collected": last_collected_str,
         },
         headers={
             "Cache-Control": "no-cache, no-store, must-revalidate",
