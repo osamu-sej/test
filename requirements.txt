@@ -5,3 +5,4 @@ httpx
 requests
 beautifulsoup4
 jinja2
+anthropic

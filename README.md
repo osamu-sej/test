@@ -26,6 +26,19 @@ GitHub Codespaces では同梱の devcontainer が依存関係を自動インス
 | `app/templates/` `app/static/` | 画面テンプレート(Jinja2)と JS/CSS |
 | `tests/` | API・キャッシュ層のテスト |
 
+## AI ダイジェスト(オプション)
+
+環境変数 `ANTHROPIC_API_KEY` を設定してサーバーを起動すると、サイドバーに
+「AI ダイジェスト」ボタンが表示され、収集済みニュースから Claude が業界動向の
+要約を生成します(未設定ならこの機能は表示されず、他の機能に影響はありません)。
+
+| 変数 | 既定値 | 説明 |
+| ---- | ------ | ---- |
+| `ANTHROPIC_API_KEY` | (なし) | Claude API キー。設定すると AI ダイジェストが有効化 |
+| `NEWS_AI_MODEL` | `claude-opus-4-8` | ダイジェスト生成に使うモデル |
+
+生成結果は同一条件で30分間キャッシュされ、API 利用コストを抑えます。
+
 ## データと自動収集
 
 - 収集結果は SQLite(既定: `data/news.db`)に蓄積され、キャッシュが新しい間は
