@@ -45,6 +45,12 @@ def _connect() -> sqlite3.Connection:
             PRIMARY KEY (company_id, date)
         )""")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_items_company_date ON news_items(company_id, date)")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS digest_cache (
+            cache_key  TEXT PRIMARY KEY,
+            created_at REAL NOT NULL,
+            content    TEXT NOT NULL
+        )""")
     return conn
 
 
@@ -132,6 +138,34 @@ def get_coverage(company_ids, dates):
     finally:
         conn.close()
     return {(r[0], r[1]): (r[2], r[3], r[4]) for r in rows}
+
+
+def get_digest(cache_key, max_age_seconds):
+    """キャッシュ済みダイジェストを返す(期限切れ・未生成なら None)。"""
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT content, created_at FROM digest_cache WHERE cache_key = ?", (cache_key,)
+        ).fetchone()
+    finally:
+        conn.close()
+    if row and (time.time() - row[1]) <= max_age_seconds:
+        return row[0]
+    return None
+
+
+def save_digest(cache_key, content) -> None:
+    conn = _connect()
+    try:
+        with conn:
+            conn.execute(
+                "INSERT INTO digest_cache (cache_key, created_at, content) VALUES (?, ?, ?) "
+                "ON CONFLICT(cache_key) DO UPDATE SET created_at = excluded.created_at, "
+                "content = excluded.content",
+                (cache_key, time.time(), content),
+            )
+    finally:
+        conn.close()
 
 
 def latest_fetch_time(company_ids, dates):

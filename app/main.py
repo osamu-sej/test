@@ -1,3 +1,4 @@
+import hashlib
 import json
 import re
 from contextlib import asynccontextmanager
@@ -5,19 +6,22 @@ from datetime import datetime
 from pathlib import Path
 
 from fastapi import FastAPI, Query, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 # companies.py から設定を読み込む
 from .companies import COMPANIES
 # 収集はサービス層(SQLite キャッシュ+スクレイパー)経由で行う
-from . import scheduler, service, storage
+from . import ai, scheduler, service, storage
 # NewsScraper はテスト(patch)や既存コードからの参照互換のため re-export
 from .scraper import NewsScraper  # noqa: F401
 
 # アプリのバージョン。改修のたびに更新する(画面左下・X-App-Version ヘッダー・/docs に表示される)
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.3.0"
+
+# AI ダイジェストのキャッシュ有効期間(秒)
+DIGEST_CACHE_TTL = 1800
 
 
 @asynccontextmanager
@@ -115,6 +119,7 @@ def read_root(request: Request, start_date: str = Query(None), end_date: str = Q
             "checked_names_json": script_safe_json(checked_names),
             "logs": logs,
             "last_collected": last_collected_str,
+            "ai_enabled": ai.is_enabled(),
         },
         headers={
             "Cache-Control": "no-cache, no-store, must-revalidate",
@@ -123,3 +128,45 @@ def read_root(request: Request, start_date: str = Query(None), end_date: str = Q
             "X-App-Version": APP_VERSION,
         },
     )
+
+
+@app.get("/digest")
+def get_digest(start_date: str = Query(None), end_date: str = Query(None), companies: list[str] = Query(None)):
+    """収集済みニュース(SQLite)から AI ダイジェストを生成して返す。
+    スクレイピングは行わない — 先に通常の検索で収集されていることが前提。"""
+    if not ai.is_enabled():
+        return JSONResponse({"enabled": False, "error": "AI 機能が無効です(ANTHROPIC_API_KEY 未設定)。"})
+
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    start_date_str = start_date if start_date and DATE_PARAM_RE.match(start_date) else today_str
+    end_date_str = end_date if end_date and DATE_PARAM_RE.match(end_date) else today_str
+    valid_ids = {c["id"] for c in COMPANIES}
+    selected_ids = [cid for cid in (companies or []) if cid in valid_ids] or [c["id"] for c in COMPANIES]
+
+    items = []
+    for cid in selected_ids:
+        items.extend(storage.get_items(cid, start_date_str, end_date_str))
+    items.sort(key=lambda i: i["date"])
+
+    if not items:
+        return JSONResponse({
+            "enabled": True,
+            "digest": None,
+            "message": "この期間の収集済みニュースがありません。先に「SEARCH NEWS」で収集してください。",
+        })
+
+    # 同一条件+同一ニュース集合なら30分間はキャッシュを返す(API コスト削減)
+    key_src = f"{start_date_str}|{end_date_str}|{','.join(sorted(selected_ids))}|" + \
+              "|".join(sorted(i["url"] for i in items))
+    cache_key = hashlib.sha256(key_src.encode()).hexdigest()
+    cached = storage.get_digest(cache_key, DIGEST_CACHE_TTL)
+    if cached:
+        return JSONResponse({"enabled": True, "digest": cached, "cached": True, "item_count": len(items)})
+
+    try:
+        digest = ai.generate_digest(items, start_date_str, end_date_str)
+    except ai.AIDigestError as exc:
+        return JSONResponse({"enabled": True, "error": str(exc)}, status_code=502)
+
+    storage.save_digest(cache_key, digest)
+    return JSONResponse({"enabled": True, "digest": digest, "cached": False, "item_count": len(items)})

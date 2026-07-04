@@ -353,6 +353,62 @@ function renderGrid(items, startDate, endDate) {
     }
 }
 
+// ===== AI ダイジェスト =====
+function toggleAiDigest() {
+    const modal = document.getElementById('digest-modal');
+    if (!modal) return;
+    if (modal.classList.contains('hidden')) {
+        modal.classList.remove('hidden');
+        modal.classList.add('flex');
+        loadAiDigest();
+    } else {
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+    }
+}
+
+function loadAiDigest() {
+    const loading = document.getElementById('digest-loading');
+    const errorEl = document.getElementById('digest-error');
+    const content = document.getElementById('digest-content');
+    const meta = document.getElementById('digest-meta');
+    loading.classList.remove('hidden');
+    errorEl.classList.add('hidden');
+    content.classList.add('hidden');
+
+    const { startDate, endDate } = getDateRange();
+    const params = new URLSearchParams();
+    if (startDate) params.append('start_date', startDate);
+    if (endDate) params.append('end_date', endDate);
+    document.querySelectorAll('input[name="companies"]:checked').forEach(cb => {
+        params.append('companies', cb.value);
+    });
+
+    fetch('/digest?' + params.toString())
+        .then(r => r.json().then(data => ({ ok: r.ok, data })))
+        .then(({ ok, data }) => {
+            loading.classList.add('hidden');
+            if (data.error || !ok) {
+                errorEl.textContent = data.error || 'ダイジェストの取得に失敗しました。';
+                errorEl.classList.remove('hidden');
+                return;
+            }
+            if (!data.digest) {
+                errorEl.textContent = data.message || 'この期間の収集済みニュースがありません。';
+                errorEl.classList.remove('hidden');
+                return;
+            }
+            content.textContent = data.digest;
+            content.classList.remove('hidden');
+            meta.textContent = `対象: ${startDate} 〜 ${endDate} ・ ${data.item_count}件のニュース` + (data.cached ? ' ・ キャッシュ' : '');
+        })
+        .catch(() => {
+            loading.classList.add('hidden');
+            errorEl.textContent = 'サーバーとの通信に失敗しました。';
+            errorEl.classList.remove('hidden');
+        });
+}
+
 function toggleSummary() {
     const modal = document.getElementById('summary-modal');
     if (modal.classList.contains('hidden')) {
