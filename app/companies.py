@@ -313,9 +313,9 @@ COMPANIES = [
     {
         "id": "jfa_fc", "name": "日本フランチャイズチェーン協会", "category": "行政・団体",
         "url": "https://www.jfa-fc.or.jp/",
-        "scraper_type": "force_link",
+        "scraper_type": "auto",
         "badge_color": "#475569",
-        "date_format": "%Y年%m月%d日"
+        "date_format": "%Y.%m.%d"
     },
 
     # --- 物流(2024年問題以降、店着・EC 配送に直結) ---
