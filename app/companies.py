@@ -286,5 +286,97 @@ COMPANIES = [
         "scraper_type": "auto",
         "badge_color": "#E60012",
         "date_format": "%Y.%m.%d"
+    },
+
+    # --- 行政・団体(規制・制度は小売オペレーション全体に影響) ---
+    {
+        "id": "meti", "name": "経済産業省", "category": "行政・団体",
+        "url": "https://www.meti.go.jp/press/index.html",
+        "scraper_type": "auto",
+        "badge_color": "#1e3a8a",
+        "date_format": "%Y年%m月%d日"
+    },
+    {
+        "id": "maff", "name": "農林水産省", "category": "行政・団体",
+        "url": "https://www.maff.go.jp/j/press/index.html",
+        "scraper_type": "auto",
+        "badge_color": "#166534",
+        "date_format": "%Y年%m月%d日"
+    },
+    {
+        "id": "caa", "name": "消費者庁", "category": "行政・団体",
+        "url": "https://www.caa.go.jp/notice/",
+        "scraper_type": "auto",
+        "badge_color": "#9d174d",
+        "date_format": "%Y年%m月%d日"
+    },
+    {
+        "id": "jfa_fc", "name": "日本フランチャイズチェーン協会", "category": "行政・団体",
+        "url": "https://www.jfa-fc.or.jp/",
+        "scraper_type": "force_link",
+        "badge_color": "#475569",
+        "date_format": "%Y年%m月%d日"
+    },
+
+    # --- 物流(2024年問題以降、店着・EC 配送に直結) ---
+    {
+        "id": "yamato", "name": "ヤマトHD", "category": "物流",
+        "url": "https://www.yamato-hd.co.jp/news/",
+        "scraper_type": "auto",
+        "badge_color": "#ca8a04",
+        "date_format": "%Y年%m月%d日"
+    },
+    {
+        "id": "sghd", "name": "SGHD(佐川)", "category": "物流",
+        "url": "https://www.sg-hldgs.co.jp/newsrelease/",
+        "scraper_type": "auto",
+        "badge_color": "#2563eb",
+        "date_format": "%Y年%m月%d日"
+    },
+    {
+        "id": "japanpost", "name": "日本郵便", "category": "物流",
+        "url": "https://www.post.japanpost.jp/notification/pressrelease/index.html",
+        "scraper_type": "auto",
+        "badge_color": "#dc2626",
+        "date_format": "%Y年%m月%d日"
+    },
+
+    # --- 外食(中食・即食の競合として) ---
+    {
+        "id": "mcdonalds", "name": "日本マクドナルドHD", "category": "外食",
+        "url": "https://www.mcd-holdings.co.jp/news/",
+        "scraper_type": "auto",
+        "badge_color": "#b91c1c",
+        "date_format": "%Y.%m.%d"
+    },
+    {
+        "id": "zensho", "name": "ゼンショーHD(すき家等)", "category": "外食",
+        "url": "https://www.zensho.co.jp/jp/company/news/",
+        "scraper_type": "auto",
+        "badge_color": "#ea580c",
+        "date_format": "%Y.%m.%d"
+    },
+    {
+        "id": "skylark", "name": "すかいらーくHD", "category": "外食",
+        "url": "https://corp.skylark.co.jp/news/",
+        "scraper_type": "auto",
+        "badge_color": "#0d9488",
+        "date_format": "%Y.%m.%d"
+    },
+
+    # --- 決済・IT(店頭決済・ポイント経済圏の動向) ---
+    {
+        "id": "paypay", "name": "PayPay", "category": "決済・IT",
+        "url": "https://about.paypay.ne.jp/pr/",
+        "scraper_type": "auto",
+        "badge_color": "#ef4444",
+        "date_format": "%Y年%m月%d日"
+    },
+    {
+        "id": "rakuten_pay", "name": "楽天ペイメント", "category": "決済・IT",
+        "url": "https://payment.rakuten.co.jp/news/",
+        "scraper_type": "auto",
+        "badge_color": "#be123c",
+        "date_format": "%Y年%m月%d日"
     }
 ]
