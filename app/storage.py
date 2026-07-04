@@ -140,6 +140,23 @@ def get_coverage(company_ids, dates):
     return {(r[0], r[1]): (r[2], r[3], r[4]) for r in rows}
 
 
+def last_item_dates(company_ids):
+    """企業ごとの最新ニュース日付 {company_id: 'YYYY-MM-DD'} を返す(実績なしは含まない)。"""
+    if not company_ids:
+        return {}
+    conn = _connect()
+    try:
+        q = ",".join("?" * len(company_ids))
+        rows = conn.execute(
+            f"SELECT company_id, MAX(date) FROM news_items WHERE company_id IN ({q}) "
+            f"GROUP BY company_id",
+            list(company_ids),
+        ).fetchall()
+    finally:
+        conn.close()
+    return {r[0]: r[1] for r in rows}
+
+
 def get_digest(cache_key, max_age_seconds):
     """キャッシュ済みダイジェストを返す(期限切れ・未生成なら None)。"""
     conn = _connect()

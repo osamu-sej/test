@@ -102,10 +102,16 @@
         </div>
     </div>
 
+    <!-- モバイル用ヘッダー(lg 未満のみ表示) -->
+    <div class="lg:hidden fixed top-0 inset-x-0 z-30 bg-slate-900 text-white flex items-center justify-between px-4 py-3 shadow-lg">
+        <button onclick="toggleSidebar()" class="flex items-center font-bold"><i class="fas fa-bars mr-2"></i>メニュー</button>
+        <span class="font-black tracking-tighter"><i class="fas fa-bolt mr-1 text-yellow-400"></i>NEWS SCOUT <span class="ml-1 text-[10px] font-mono text-slate-400">v{{ version }}</span></span>
+    </div>
+
     <div class="flex h-full">
-        <aside class="w-80 bg-white border-r border-slate-200 overflow-y-auto flex flex-col shadow-sm z-20">
+        <aside id="sidebar" class="w-80 max-w-full bg-white border-r border-slate-200 overflow-y-auto hidden lg:flex flex-col shadow-sm z-20">
             <div class="p-6 bg-slate-900 text-white sticky top-0 z-10">
-                <h1 class="text-2xl font-black tracking-tighter flex items-center"><i class="fas fa-bolt mr-3 text-yellow-400"></i>NEWS SCOUT</h1>
+                <h1 class="text-2xl font-black tracking-tighter flex items-center justify-between"><span><i class="fas fa-bolt mr-3 text-yellow-400"></i>NEWS SCOUT</span><button onclick="toggleSidebar()" class="lg:hidden text-slate-400 hover:text-white p-1" title="閉じる"><i class="fas fa-times"></i></button></h1>
                 <p class="text-slate-400 text-xs mt-1 font-medium tracking-widest flex items-center justify-between">RETAIL INTELLIGENCE<span class="ml-2 px-1.5 py-0.5 bg-slate-700 text-slate-300 rounded text-[10px] font-mono tracking-normal" title="アプリのバージョン">v{{ version }}</span></p>
             </div>
 
@@ -157,7 +163,7 @@
                 </div>
             </form>
         </aside>
-        <main class="flex-1 p-10 overflow-y-auto bg-slate-50">
+        <main class="flex-1 p-4 pt-20 lg:p-10 overflow-y-auto bg-slate-50">
             <div class="max-w-6xl mx-auto">
                 <div class="mb-4">
                     <div class="relative mb-4">
@@ -172,6 +178,7 @@
                         <button onclick="filterNews('category', 'corporate')" id="btn-corporate" class="filter-btn px-4 py-2 bg-white border border-slate-200 rounded-full text-sm font-bold text-slate-600 hover:bg-slate-50 transition-colors shadow-sm">🏢 経営・人事</button>
                         <button onclick="filterNews('category', 'store')" id="btn-store" class="filter-btn px-4 py-2 bg-white border border-slate-200 rounded-full text-sm font-bold text-slate-600 hover:bg-slate-50 transition-colors shadow-sm">🏪 店舗・地域</button>
                         <button onclick="filterNews('category', 'dx')" id="btn-dx" class="filter-btn px-4 py-2 bg-white border border-slate-200 rounded-full text-sm font-bold text-slate-600 hover:bg-slate-50 transition-colors shadow-sm">📱 DX・デジタル</button>
+                        <button onclick="filterNews('bookmarks', '')" id="btn-bookmarks" class="filter-btn px-4 py-2 bg-white border border-amber-200 rounded-full text-sm font-bold text-amber-600 hover:bg-amber-50 transition-colors shadow-sm">⭐ ブックマーク</button>
                     </div>
                 </div>
 
@@ -184,7 +191,10 @@
                             {% if last_collected %}<span class="ml-3 text-xs text-slate-400" title="サーバーがこの範囲を最後に収集した時刻">収集: {{ last_collected }}</span>{% endif %}
                         </div>
                     </div>
-                    <span id="result-count" class="bg-blue-100 text-blue-700 font-bold px-4 py-2 rounded-full text-sm shadow-sm">Loading...</span>
+                    <div class="flex items-center gap-2">
+                        <button onclick="exportCsv()" title="表示中のニュースを CSV でダウンロード(Excel で開けます)" class="px-3 py-2 bg-white border border-slate-200 rounded-full text-xs font-bold text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition-colors shadow-sm"><i class="fas fa-file-csv mr-1"></i>CSV</button>
+                        <span id="result-count" class="bg-blue-100 text-blue-700 font-bold px-4 py-2 rounded-full text-sm shadow-sm">Loading...</span>
+                    </div>
                 </div>
 
                 <div id="result-grid" class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6"></div>
@@ -196,6 +206,16 @@
                     <p class="text-xl font-bold">まだデータがありません</p>
                     <p class="mt-2 text-sm">「SEARCH NEWS」ボタンを押して収集を開始してください</p>
                 </div>
+
+                {% if stale_warnings %}
+                <div class="mt-10 p-4 bg-amber-50 border border-amber-200 rounded-xl text-sm">
+                    <p class="font-bold text-amber-700 mb-1"><i class="fas fa-triangle-exclamation mr-2"></i>しばらく新着を取得できていない情報源</p>
+                    <p class="text-xs text-amber-600 mb-2">サイト構造の変更や一時的な不具合の可能性があります(直近60日以内に取得実績があり、7日を超えて新着なし)</p>
+                    <div class="flex flex-wrap gap-2">
+                        {% for w in stale_warnings %}<span class="px-2 py-1 bg-white border border-amber-200 rounded-full text-xs font-bold text-amber-700">{{ w.name }}({{ w.days }}日)</span>{% endfor %}
+                    </div>
+                </div>
+                {% endif %}
 
                 <div class="mt-16 pt-6 border-t border-slate-200">
                     <details class="bg-slate-800 text-green-300 p-5 rounded-xl text-xs font-mono shadow-inner">
