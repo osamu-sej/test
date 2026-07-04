@@ -1,5 +1,5 @@
 {
-  "name": "FastAPI TODO",
+  "name": "Retail News Scout",
   "build": {
     "dockerfile": "../Dockerfile"
   },

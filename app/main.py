@@ -1,9 +1,9 @@
 import json
 import re
 import unicodedata
-from datetime import datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from urllib.parse import urljoin, urlparse, urlunparse
-import time
 import requests
 from bs4 import BeautifulSoup
 from fastapi import FastAPI, Query, Response
@@ -12,7 +12,28 @@ from fastapi.responses import HTMLResponse
 # companies.py から設定を読み込む
 from .companies import COMPANIES
 
-app = FastAPI(title="Retail News Scout")
+# アプリのバージョン。改修のたびに更新する(画面左下・X-App-Version ヘッダー・/docs に表示される)
+APP_VERSION = "1.1.0"
+
+app = FastAPI(title="Retail News Scout", version=APP_VERSION)
+
+# 日付抽出用の正規表現(要素ごとに再コンパイルしないよう事前コンパイル)
+DATE_FLEX_FINDALL_RE = re.compile(r"\d{4}\s*[./年]\s*\d{1,2}\s*[./月]\s*\d{1,2}")
+DATE_FLEX_CAPTURE_RE = re.compile(r"(\d{4})\s*[./年]\s*(\d{1,2})\s*[./月]\s*(\d{1,2})")
+DATE_STRIP_RE = re.compile(r"20\d{2}\s*[./年]\s*\d{1,2}\s*[./月]\s*\d{1,2}\s*日?")
+LIFE_DATE_RE = re.compile(r"20\d{2}/\d{1,2}/\d{1,2}")
+WHITESPACE_RE = re.compile(r"\s+")
+
+REQUEST_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+    "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+    "Referer": "https://www.google.com/",
+    "Connection": "keep-alive"
+}
+
+# 同時に張る接続数の上限(相手サイトはすべて別ドメインなので各サイトへは1接続)
+FETCH_MAX_WORKERS = 10
 
 # ==========================================
 #  スクレイピングロジック (NewsScraper)
@@ -20,13 +41,19 @@ app = FastAPI(title="Retail News Scout")
 class NewsScraper:
     def __init__(self) -> None:
         self.session = requests.Session()
-        self.session.headers.update({
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-            "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
-            "Referer": "https://www.google.com/",
-            "Connection": "keep-alive"
-        })
+        self.session.headers.update(REQUEST_HEADERS)
+
+    def _fetch_one(self, url):
+        """1サイト分の GET。並列実行のためスレッドごとに独立した Session を使う。
+        例外は握りつぶさず呼び出し側で従来どおり処理できるよう値として返す。"""
+        session = requests.Session()
+        session.headers.update(REQUEST_HEADERS)
+        try:
+            return session.get(url, timeout=10.0)
+        except Exception as exc:
+            return exc
+        finally:
+            session.close()
 
     def _fallback_item(self, company, target_date_str, status_code=None):
         if status_code == 403:
@@ -59,8 +86,26 @@ class NewsScraper:
         checked_company_names = []
         debug_logs.append(f"=== Range: {start_date_str} ~ {end_date_str} ===")
 
+        # id からの企業ルックアップ用(ループ内で毎回線形探索しないため)
+        company_map = {c["id"]: c for c in COMPANIES}
+
+        # HTTP取得だけを先に並列実行する(ページの解析・結果の並び・ログは
+        # 従来どおり company_ids の順に直列処理するので出力は変わらない)
+        fetch_targets = [
+            cid for cid in company_ids
+            if cid in company_map and company_map[cid].get("scraper_type") != "force_link"
+        ]
+        prefetched = {}
+        if fetch_targets:
+            with ThreadPoolExecutor(max_workers=min(FETCH_MAX_WORKERS, len(fetch_targets))) as pool:
+                for cid, result in zip(
+                    fetch_targets,
+                    pool.map(lambda c: self._fetch_one(company_map[c]["url"]), fetch_targets),
+                ):
+                    prefetched[cid] = result
+
         for cid in company_ids:
-            company = next((c for c in COMPANIES if c["id"] == cid), None)
+            company = company_map.get(cid)
             if not company: continue
             
             # ★修正：ここも抜けていました！リストに追加します
@@ -80,9 +125,11 @@ class NewsScraper:
                 continue
 
             html_content = None
-            
+
             try:
-                resp = self.session.get(company["url"], timeout=10.0)
+                resp = prefetched[cid]
+                if isinstance(resp, Exception):
+                    raise resp
                 resp.encoding = resp.apparent_encoding
                 
                 if resp.status_code == 404:
@@ -110,12 +157,12 @@ class NewsScraper:
             
             # --- ライフ専用ロジック (構造が特殊なため維持) ---
             if company["id"] == "life":
-                life_dates = soup.find_all(string=re.compile(r"20\d{2}/\d{1,2}/\d{1,2}"))
+                life_dates = soup.find_all(string=LIFE_DATE_RE)
                 candidates_map = {} 
                 for date_node in life_dates:
                     try:
                         date_text = date_node.strip()
-                        y, m, d = re.split(r"[/]", date_text)
+                        y, m, d = date_text.split("/")
                         found_date_str = f"{y}-{int(m):02d}-{int(d):02d}"
                         if start_date_str <= found_date_str <= end_date_str:
                             card_node = date_node.parent
@@ -150,7 +197,7 @@ class NewsScraper:
                             ignore_words = [date_text, "社会・環境", "商品・サービス", "新店・改装", "その他", "すべて", "NEW", "お知らせ", "ニュースリリース", "重要なお知らせ"]
                             for w in ignore_words:
                                 card_full_text = card_full_text.replace(w, "")
-                            clean_card_text = re.sub(r'\s+', ' ', card_full_text).strip()
+                            clean_card_text = WHITESPACE_RE.sub(' ', card_full_text).strip()
                             if len(clean_card_text) > 1:
                                 title_candidates.append(clean_card_text)
 
@@ -194,10 +241,10 @@ class NewsScraper:
                     if len(full_text) > 500: continue
 
                     # 複数の日付を含む要素はコンテナ（複数ニュースの親要素）なのでスキップ
-                    all_date_matches = re.findall(r"\d{4}\s*[./年]\s*\d{1,2}\s*[./月]\s*\d{1,2}", full_text)
+                    all_date_matches = DATE_FLEX_FINDALL_RE.findall(full_text)
                     if len(all_date_matches) > 1: continue
 
-                    match = re.search(r"(\d{4})\s*[./年]\s*(\d{1,2})\s*[./月]\s*(\d{1,2})", full_text)
+                    match = DATE_FLEX_CAPTURE_RE.search(full_text)
                     if not match: continue
                     y, m, d = match.groups()
                     found_date_str = f"{y}-{int(m):02d}-{int(d):02d}"
@@ -227,7 +274,7 @@ class NewsScraper:
                                 # 親要素が複数日付を含む場合はコンテナなので探索を中止
                                 if curr != element:
                                     parent_text = unicodedata.normalize("NFKC", curr.get_text(" ", strip=True))
-                                    parent_dates = re.findall(r"\d{4}\s*[./年]\s*\d{1,2}\s*[./月]\s*\d{1,2}", parent_text)
+                                    parent_dates = DATE_FLEX_FINDALL_RE.findall(parent_text)
                                     if len(parent_dates) > 1:
                                         break
                                 # 親の要素内にある他のリンクを探す（行全体がリンクになっていない場合など）
@@ -249,7 +296,7 @@ class NewsScraper:
                                 if link_tag.parent:
                                     parent_text = link_tag.parent.get_text(" ", strip=True)
                                     # 日付だけ削除してタイトルにする
-                                    clean_title = re.sub(r"20\d{2}\s*[./年]\s*\d{1,2}\s*[./月]\s*\d{1,2}\s*日?", "", parent_text).strip()
+                                    clean_title = DATE_STRIP_RE.sub("", parent_text).strip()
                                     if len(clean_title) > 5:
                                         title = clean_title
                                     else:
@@ -279,6 +326,7 @@ class NewsScraper:
 #  UI生成ロジック
 # ==========================================
 def generate_sidebar_html(selected_ids):
+    selected_ids = set(selected_ids)
     categories = {}
     for c in COMPANIES:
         categories.setdefault(c["category"], []).append(c)
@@ -314,7 +362,10 @@ def generate_sidebar_html(selected_ids):
     return html
 
 @app.get("/", response_class=HTMLResponse)
-async def read_root(start_date: str = Query(None), end_date: str = Query(None), companies: list[str] = Query(None), response: Response = None):
+def read_root(start_date: str = Query(None), end_date: str = Query(None), companies: list[str] = Query(None), response: Response = None):
+    # 同期関数にすることで FastAPI がスレッドプール上で実行し、
+    # スクレイピング中もイベントループが他のリクエストを処理できる
+
     today = datetime.now()
     # 初期状態は全選択
     selected_ids = companies if companies else [c["id"] for c in COMPANIES]
@@ -345,6 +396,7 @@ async def read_root(start_date: str = Query(None), end_date: str = Query(None), 
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
+        response.headers["X-App-Version"] = APP_VERSION
 
     return f"""
     <!DOCTYPE html>
@@ -950,7 +1002,7 @@ async def read_root(start_date: str = Query(None), end_date: str = Query(None), 
             <aside class="w-80 bg-white border-r border-slate-200 overflow-y-auto flex flex-col shadow-sm z-20">
                 <div class="p-6 bg-slate-900 text-white sticky top-0 z-10">
                     <h1 class="text-2xl font-black tracking-tighter flex items-center"><i class="fas fa-bolt mr-3 text-yellow-400"></i>NEWS SCOUT</h1>
-                    <p class="text-slate-400 text-xs mt-1 font-medium tracking-widest">RETAIL INTELLIGENCE</p>
+                    <p class="text-slate-400 text-xs mt-1 font-medium tracking-widest flex items-center justify-between">RETAIL INTELLIGENCE<span class="ml-2 px-1.5 py-0.5 bg-slate-700 text-slate-300 rounded text-[10px] font-mono tracking-normal" title="アプリのバージョン">v{APP_VERSION}</span></p>
                 </div>
                 
                 <div class="px-6 pt-6">
