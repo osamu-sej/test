@@ -3,4 +3,5 @@ uvicorn
 pytest
 httpx
 requests
-beautifulsoup4jinja2
+beautifulsoup4
+jinja2
