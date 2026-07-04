@@ -19,7 +19,7 @@ from . import ai, scheduler, service, storage
 from .scraper import NewsScraper  # noqa: F401
 
 # アプリのバージョン。改修のたびに更新する(画面左下・X-App-Version ヘッダー・/docs に表示される)
-APP_VERSION = "1.6.0"
+APP_VERSION = "1.7.0"
 
 # AI ダイジェスト/Q&A のキャッシュ有効期間(秒)
 DIGEST_CACHE_TTL = 1800
@@ -143,6 +143,8 @@ def read_root(request: Request, start_date: str = Query(None), end_date: str = Q
             "sidebar_html": generate_sidebar_html(selected_ids),
             "items_json": script_safe_json(items),
             "checked_names_json": script_safe_json(checked_names),
+            # CSV エクスポートの「業態」列用: 企業名 → カテゴリのマップ
+            "company_categories_json": script_safe_json({c["name"]: c["category"] for c in COMPANIES}),
             "logs": logs,
             "last_collected": last_collected_str,
             "ai_enabled": ai.is_enabled(),

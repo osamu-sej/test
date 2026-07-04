@@ -101,9 +101,21 @@ function exportCsv() {
         alert('エクスポートする表示中のニュースがありません。');
         return;
     }
+    const categories = window.COMPANY_CATEGORIES || {};
+    const bookmarks = getBookmarks();
+    const readSet = getReadSet();
     const q = v => '"' + String(v ?? '').replace(/"/g, '""') + '"';
-    const rows = [['日付', '企業', 'タイトル', 'URL'].map(q).join(',')];
-    items.forEach(i => rows.push([q(i.date), q(i.company_name), q(i.title), q(i.url)].join(',')));
+    const rows = [['日付', '企業', '業態', '分類', 'タイトル', 'URL', 'ブックマーク', '既読'].map(q).join(',')];
+    items.forEach(i => rows.push([
+        q(i.date),
+        q(i.company_name),
+        q(categories[i.company_name] || ''),
+        q(classifyTopics(i.title)),
+        q(i.title),
+        q(i.url),
+        q(bookmarks[i.url] ? '★' : ''),
+        q(readSet[i.url] ? '既読' : ''),
+    ].join(',')));
     // 先頭の BOM で Excel でも文字化けせずに開ける
     const blob = new Blob(['\uFEFF' + rows.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
     const a = document.createElement('a');
@@ -358,6 +370,23 @@ const TOPIC_KEYWORDS = {
     'store': ['店舗', '店', 'オープン', '改装', '地域', '地産', '県', '市', '都', '府', '建築', '開発'],
     'dx': ['アプリ', 'DX', 'システム', 'デジタル', '決済', 'AI', 'ロボット']
 };
+
+// 画面のフィルタボタンと同じ分類の表示名(CSV の「分類」列で使う)
+const TOPIC_LABELS = {
+    'product': '商品・販促',
+    'csr': '環境・社会',
+    'corporate': '経営・人事',
+    'store': '店舗・地域',
+    'dx': 'DX・デジタル',
+};
+
+// タイトルをキーワード分類する。複数該当は「・」区切り、該当なしは「その他」
+function classifyTopics(title) {
+    const hits = Object.keys(TOPIC_KEYWORDS)
+        .filter(key => TOPIC_KEYWORDS[key].some(kw => String(title || '').includes(kw)))
+        .map(key => TOPIC_LABELS[key]);
+    return hits.length ? hits.join('・') : 'その他';
+}
 
 let currentFilterMode = 'category';
 let currentCategory = 'all';

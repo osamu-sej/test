@@ -126,6 +126,9 @@ def test_ui_elements_present(monkeypatch):
     assert 'id="tab-ask"' in res.text
     assert 'id="ask-input"' in res.text
     assert "AI アシスタント" in res.text
+    # CSV の「業態」列用の企業カテゴリマップが埋め込まれている
+    assert "window.COMPANY_CATEGORIES" in res.text
+    assert "ディスカウント" in res.text
 
 
 def test_ai_ui_hidden_without_api_key(monkeypatch):
