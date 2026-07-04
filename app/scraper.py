@@ -235,7 +235,11 @@ class NewsScraper:
             # 「採点」や「強力検索」などの余計なことはせず、シンプルに探す
             if found_count == 0:
                 target_tags = soup.find_all(['dt', 'dd', 'li', 'div', 'p', 'span', 'time', 'td', 'tr'])
-                processed_urls = set()
+                # (url, date, title) で重複判定する。入れ子要素(例: li の中の div)が
+                # 同じ記事を二重に拾うのを防ぎつつ、統計ページ等の「同じURLに日付違いの
+                # お知らせが複数リンクする」ケースを別記事として残すため、url 単独ではなく
+                # 日付・タイトルまで含めたキーにしている
+                processed_keys = set()
 
                 for element in target_tags:
                     full_text = unicodedata.normalize("NFKC", element.get_text(" ", strip=True))
@@ -303,7 +307,8 @@ class NewsScraper:
                                     else:
                                         title = "ニュース詳細"
 
-                            if url not in processed_urls:
+                            dedup_key = (url, found_date_str, title)
+                            if dedup_key not in processed_keys:
                                 all_items.append({
                                     "company_name": company["name"],
                                     "badge_color": company["badge_color"],
@@ -313,7 +318,7 @@ class NewsScraper:
                                     "is_link_only": False,
                                     "is_error": False
                                 })
-                                processed_urls.add(url)
+                                processed_keys.add(dedup_key)
                                 found_count += 1
                                 debug_logs.append(f"  -> Found: {title[:15]}...")
                                 # あえて break しない（同じ日に複数ニュースがある場合のため）

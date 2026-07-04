@@ -23,6 +23,16 @@ JFA_FIXTURE_HTML = """
     <dd><a href="/news/old.html">範囲外の古いお知らせ</a></dd>
   </dl>
 </div>
+<div class="press-release">
+  <dl>
+    <dt>2026.06.22</dt>
+    <dd><a href="/statistics_cvs/">コンビニエンスストア統計調査5月度</a></dd>
+    <dt>2026.05.20</dt>
+    <dd><a href="/statistics_cvs/">コンビニエンスストア統計調査4月度</a></dd>
+    <dt>2026.04.20</dt>
+    <dd><a href="/statistics_cvs/">コンビニエンスストア統計調査3月度</a></dd>
+  </dl>
+</div>
 </body></html>
 """
 
@@ -58,3 +68,23 @@ def test_jfa_fc_generic_scraper_extracts_titles(monkeypatch):
     assert not any("範囲外" in t for t in titles)
     # force_link 特有のリンクのみ表示にはなっていない
     assert all(not i["is_link_only"] for i in items)
+
+
+def test_same_url_different_dates_are_not_deduplicated(monkeypatch):
+    """同じ URL(例: 統計ページ)に日付違いの複数のお知らせがリンクしている場合、
+    URL だけで重複排除すると後続の記事が消えてしまう。日付・タイトルも含めた
+    キーで判定し、それぞれ別記事として残ることを確認する(Codex レビュー起因の回帰テスト)。"""
+    def fake_get(self, url, timeout=None, **kwargs):
+        return FakeResponse(200, JFA_FIXTURE_HTML)
+
+    monkeypatch.setattr(requests.Session, "get", fake_get)
+    items, logs, checked = NewsScraper().fetch_news(["jfa_fc"], "2026-04-01", "2026-06-30")
+
+    stats_items = [i for i in items if i["url"].endswith("/statistics_cvs/")]
+    stats_titles = {i["title"] for i in stats_items}
+    assert stats_titles == {
+        "コンビニエンスストア統計調査5月度",
+        "コンビニエンスストア統計調査4月度",
+        "コンビニエンスストア統計調査3月度",
+    }
+    assert len(stats_items) == 3
