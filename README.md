@@ -17,9 +17,30 @@ GitHub Codespaces では同梱の devcontainer が依存関係を自動インス
 
 | パス | 内容 |
 | ---- | ---- |
-| `app/main.py` | FastAPI アプリ本体。`NewsScraper`(スクレイピング)と HTML 生成、`GET /` エンドポイント |
+| `app/main.py` | FastAPI ルーティングと UI 生成 |
+| `app/scraper.py` | `NewsScraper`(各社サイトの並列スクレイピング) |
+| `app/service.py` | 収集オーケストレーション(SQLite キャッシュの鮮度判断) |
+| `app/storage.py` | SQLite 永続化層(ニュース履歴と収集記録) |
+| `app/scheduler.py` | 定時自動収集(バックグラウンドスレッド) |
 | `app/companies.py` | 収集対象企業(コンビニ / スーパー / ドラッグストア / ディスカウント / 飲料 / お菓子 / 冷凍食品)の定義 |
-| `tests/test_api.py` | `fetch_news` をモックした API テスト |
+| `app/templates/` `app/static/` | 画面テンプレート(Jinja2)と JS/CSS |
+| `tests/` | API・キャッシュ層のテスト |
+
+## データと自動収集
+
+- 収集結果は SQLite(既定: `data/news.db`)に蓄積され、キャッシュが新しい間は
+  再スクレイピングせず即応答します(画面の「収集: MM/DD HH:MM」が収集時刻)
+- サーバー起動中はバックグラウンドで定期収集が走ります
+- サイドバーの「キャッシュを無視して再収集」でいつでも強制再収集できます
+
+主な環境変数:
+
+| 変数 | 既定値 | 説明 |
+| ---- | ------ | ---- |
+| `NEWS_DB_PATH` | `data/news.db` | SQLite ファイルの場所 |
+| `NEWS_SCHEDULER` | `on` | `off` で定時収集を無効化 |
+| `NEWS_SCHEDULER_INTERVAL` | `1800` | 定時収集の間隔(秒) |
+| `NEWS_TTL_TODAY` / `NEWS_TTL_PAST` / `NEWS_TTL_ERROR` | `1800` / `86400` / `300` | キャッシュ鮮度(秒) |
 
 ## エンドポイント
 
