@@ -19,6 +19,17 @@ details > summary::-webkit-details-marker { display: none; }
     color: white;
     border-color: #3b82f6;
 }
+.ai-tab {
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+}
+.ai-tab.active {
+    color: #2563eb;
+    border-bottom-color: #2563eb;
+}
+#scroll-top-btn {
+    backdrop-filter: blur(4px);
+}
 mark {
     background-color: #fef08a;
     color: inherit;

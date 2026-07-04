@@ -6,6 +6,9 @@ const STORAGE_KEY = 'retail_news_date_cache_v1';
 const BOOKMARK_KEY = 'retail_news_bookmarks_v1';
 const READ_KEY = 'retail_news_read_v1';
 
+// 「NEW」バッジの表示期間(このブラウザで初めて見つけてから24時間)
+const NEW_BADGE_MS = 24 * 60 * 60 * 1000;
+
 // 直近 renderGrid で表示した(フィルタ適用後の)項目。CSV エクスポートが使う
 let lastRenderedItems = [];
 
@@ -53,12 +56,21 @@ function toggleBookmark(url) {
         };
     }
     localStorage.setItem(BOOKMARK_KEY, JSON.stringify(bookmarks));
+    updateBookmarkBadge();
     // 現在の表示を維持したまま再描画(ブックマーク表示中なら一覧から消える)
     if (currentFilterMode === 'bookmarks') {
         filterNews('bookmarks', '');
     } else {
         renderGrid(lastRenderedSource, ...Object.values(getDateRange()));
     }
+}
+
+function updateBookmarkBadge() {
+    const badge = document.getElementById('bookmark-count');
+    if (!badge) return;
+    const count = Object.keys(getBookmarks()).length;
+    badge.textContent = count;
+    badge.classList.toggle('hidden', count === 0);
 }
 
 function getReadSet() {
@@ -183,6 +195,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const END_DATE = window.END_DATE;
 
     updateCacheAndRender(START_DATE, END_DATE, SERVER_RESULTS, CHECKED_NAMES);
+    updateBookmarkBadge();
 
     startInput.addEventListener('change', function() { renderFromCacheRange(); });
     endInput.addEventListener('change', function() { renderFromCacheRange(); });
@@ -191,7 +204,50 @@ document.addEventListener('DOMContentLoaded', function() {
         const keyword = e.target.value;
         filterNews('search', keyword);
     });
+
+    // AI 質問: Enter で送信(IME 変換確定の Enter は無視)
+    const askInput = document.getElementById('ask-input');
+    if (askInput) {
+        askInput.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter' && !e.isComposing) askAi();
+        });
+    }
+
+    // キーボードショートカット: / でキーワード欄へ、Esc でモーダルを閉じる/絞り込み解除
+    document.addEventListener('keydown', function(e) {
+        const tag = (document.activeElement && document.activeElement.tagName) || '';
+        const typing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+        if (e.key === '/' && !typing) {
+            e.preventDefault();
+            searchInput.focus();
+        } else if (e.key === 'Escape') {
+            const digestModal = document.getElementById('digest-modal');
+            const summaryModal = document.getElementById('summary-modal');
+            if (digestModal && !digestModal.classList.contains('hidden')) {
+                toggleAiDigest();
+            } else if (summaryModal && !summaryModal.classList.contains('hidden')) {
+                toggleSummary();
+            } else if (document.activeElement === searchInput && searchInput.value) {
+                searchInput.value = '';
+                filterNews('search', '');
+            }
+        }
+    });
+
+    // メイン領域のスクロールで「上へ戻る」ボタンを表示
+    const main = document.querySelector('main');
+    const topBtn = document.getElementById('scroll-top-btn');
+    if (main && topBtn) {
+        main.addEventListener('scroll', function() {
+            topBtn.classList.toggle('hidden', main.scrollTop < 400);
+        });
+    }
 });
+
+function scrollToTop() {
+    const main = document.querySelector('main');
+    if (main) main.scrollTo({ top: 0, behavior: 'smooth' });
+}
 
 function updateCacheAndRender(startDate, endDate, newItems, checkedNames) {
     let cache = getCache();
@@ -223,7 +279,8 @@ function updateCacheAndRender(startDate, endDate, newItems, checkedNames) {
         const newDateItems = byDate[dk] || [];
         newDateItems.forEach(item => {
             if (!dateItems.some(saved => saved.url === item.url)) {
-                dateItems.push(item);
+                // このブラウザで初めて見つけた時刻を記録(「NEW」バッジ表示に使う)
+                dateItems.push({ ...item, first_seen: Date.now() });
             }
         });
 
@@ -292,7 +349,20 @@ const TOPIC_KEYWORDS = {
 let currentFilterMode = 'category';
 let currentCategory = 'all';
 let currentSearchText = '';
+let currentSort = 'new';
 let dashboardMonth = '';
+
+function setSort(value) {
+    currentSort = value;
+    // 現在の表示モードを維持したまま並び替えて再描画
+    if (currentFilterMode === 'search') {
+        filterNews('search', currentSearchText);
+    } else if (currentFilterMode === 'bookmarks' || currentFilterMode === 'unread') {
+        filterNews(currentFilterMode, '');
+    } else {
+        filterNews('category', currentCategory);
+    }
+}
 
 function filterNews(mode, value) {
     currentFilterMode = mode;
@@ -313,7 +383,6 @@ function filterNews(mode, value) {
                 seen.add(item.url);
                 return true;
             });
-            itemsToDisplay.sort((a, b) => new Date(b.date) - new Date(a.date));
             document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));
         } else {
             itemsToDisplay = collectItemsInRange(startDate, endDate);
@@ -325,29 +394,59 @@ function filterNews(mode, value) {
         document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));
         document.getElementById('btn-' + value).classList.add('active');
         itemsToDisplay = collectItemsInRange(startDate, endDate);
+    } else if (mode === 'unread') {
+        currentSearchText = '';
+        document.getElementById('keywordInput').value = '';
+        document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));
+        document.getElementById('btn-unread').classList.add('active');
+        itemsToDisplay = collectItemsInRange(startDate, endDate);
     } else if (mode === 'bookmarks') {
         currentSearchText = '';
         document.getElementById('keywordInput').value = '';
         document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));
         document.getElementById('btn-bookmarks').classList.add('active');
         itemsToDisplay = Object.values(getBookmarks());
-        itemsToDisplay.sort((a, b) => new Date(b.date) - new Date(a.date));
     }
     renderGrid(itemsToDisplay, startDate, endDate);
 }
 
-function checkFilter(title) {
+function checkFilter(item, readSet) {
     if (currentFilterMode === 'bookmarks') {
         return true;
     }
+    if (currentFilterMode === 'unread') {
+        return !(readSet || getReadSet())[item.url];
+    }
     if (currentFilterMode === 'search') {
         if (!currentSearchText) return true;
-        return title.toLowerCase().includes(currentSearchText.toLowerCase());
+        return item.title.toLowerCase().includes(currentSearchText.toLowerCase());
     } else {
         if (currentCategory === 'all') return true;
         const keywords = TOPIC_KEYWORDS[currentCategory] || [];
-        return keywords.some(kw => title.includes(kw));
+        return keywords.some(kw => item.title.includes(kw));
     }
+}
+
+function sortItems(items) {
+    const sorted = items.slice();
+    if (currentSort === 'old') {
+        sorted.sort((a, b) => new Date(a.date) - new Date(b.date));
+    } else if (currentSort === 'company') {
+        sorted.sort((a, b) =>
+            (a.company_name || '').localeCompare(b.company_name || '', 'ja') ||
+            (new Date(b.date) - new Date(a.date)));
+    } else {
+        sorted.sort((a, b) => new Date(b.date) - new Date(a.date));
+    }
+    return sorted;
+}
+
+// 表示中の並び順に応じたグループ見出しラベル(日付順なら日付、企業別なら企業名)
+function groupLabel(item, todayStr, yesterdayStr) {
+    if (currentSort === 'company') return item.company_name || '';
+    if (item.date === todayStr) return '今日 ・ ' + item.date;
+    if (item.date === yesterdayStr) return '昨日 ・ ' + item.date;
+    return item.date;
 }
 
 function highlightText(text, keyword) {
@@ -379,15 +478,21 @@ function renderGrid(items, startDate, endDate) {
         }
     }
 
-    const filteredItems = items.filter(item => checkFilter(item.title));
+    const bookmarks = getBookmarks();
+    const readSet = getReadSet();
+
+    const filteredItems = sortItems(items.filter(item => checkFilter(item, readSet)));
     lastRenderedItems = filteredItems;
 
     if (!filteredItems || filteredItems.length === 0) {
         gridContainer.innerHTML = '';
         linkContainer.innerHTML = '';
+        linkContainer.classList.add('hidden');
         if (emptyMsg) {
             emptyMsg.classList.remove('hidden');
-            const isFiltering = (currentFilterMode === 'search' && currentSearchText) || (currentFilterMode === 'category' && currentCategory !== 'all');
+            const isFiltering = (currentFilterMode === 'search' && currentSearchText) ||
+                (currentFilterMode === 'category' && currentCategory !== 'all') ||
+                currentFilterMode === 'unread';
             const msgText = (items.length > 0 && isFiltering) ? "条件に一致するニュースはありません" : "まだデータがありません";
             emptyMsg.querySelector('p.text-xl').textContent = msgText;
         }
@@ -396,16 +501,39 @@ function renderGrid(items, startDate, endDate) {
     }
 
     if (emptyMsg) emptyMsg.classList.add('hidden');
-    if (countBadge) countBadge.textContent = filteredItems.length + ' items';
+    if (countBadge) {
+        // 絞り込みで隠れている件数が分かるよう「表示中 / 全体」で示す
+        countBadge.textContent = filteredItems.length === items.length
+            ? filteredItems.length + ' items'
+            : filteredItems.length + ' / ' + items.length + ' items';
+    }
 
     const linkOnlyItems = filteredItems.filter(i => i.is_link_only);
     const cardItems = filteredItems.filter(i => !i.is_link_only);
-    const bookmarks = getBookmarks();
-    const readSet = getReadSet();
+
+    const now = new Date();
+    const todayStr = formatDate(now);
+    const yesterday = new Date(now);
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayStr = formatDate(yesterday);
+    let prevGroup = null;
 
     gridContainer.innerHTML = cardItems.map(item => {
+        // 日付順(または企業別)のグループ見出しを差し込む
+        let header = '';
+        const label = groupLabel(item, todayStr, yesterdayStr);
+        if (label !== prevGroup) {
+            prevGroup = label;
+            const icon = currentSort === 'company' ? 'fa-building' : 'far fa-calendar-alt';
+            header = `
+            <div class="col-span-full flex items-center gap-3 mt-2 -mb-2 first:mt-0">
+                <span class="text-sm font-black text-slate-500 whitespace-nowrap"><i class="fas ${icon} mr-2 text-slate-300"></i>${esc(label)}</span>
+                <span class="flex-1 border-t border-slate-200"></span>
+            </div>`;
+        }
         const bookmarked = !!bookmarks[item.url];
         const isRead = !!readSet[item.url];
+        const isNew = !isRead && item.first_seen && (Date.now() - item.first_seen) < NEW_BADGE_MS;
         let bgClass = "bg-white";
         let textClass = "text-slate-800";
         if (item.is_error) {
@@ -421,14 +549,15 @@ function renderGrid(items, startDate, endDate) {
         if (currentFilterMode === 'search' && currentSearchText) {
             displayTitle = highlightText(displayTitle, currentSearchText);
         }
-        return `
+        return header + `
         <div class="relative ${bgClass} ${isRead ? 'opacity-55' : ''} p-6 rounded-xl shadow-md border-t-4 hover:-translate-y-1 hover:shadow-lg transition-all duration-200 ease-out group flex flex-col h-full news-card" style="border-color: ${esc(item.badge_color)}">
             <div class="flex items-center justify-between mb-4">
-                <div class="flex items-center">
+                <div class="flex items-center min-w-0">
                     <img src="https://www.google.com/s2/favicons?domain=${esc(item.url)}&sz=32" alt="ロゴ" class="w-5 h-5 mr-3 rounded-full shadow-sm bg-white p-0.5 opacity-80">
-                    <span class="text-xs font-bold text-slate-500 uppercase tracking-wider">${esc(item.company_name)}</span>
+                    <span class="text-xs font-bold text-slate-500 uppercase tracking-wider truncate">${esc(item.company_name)}</span>
+                    ${isNew ? '<span class="ml-2 px-1.5 py-0.5 bg-rose-100 text-rose-600 rounded font-black text-[10px] tracking-wider flex-shrink-0" title="このブラウザで24時間以内に初めて取得">NEW</span>' : ''}
                 </div>
-                <span class="text-xs font-medium text-slate-400 bg-slate-100 px-2 py-1 rounded-full whitespace-nowrap"><i class="far fa-calendar-alt mr-1"></i>${esc(item.date)}</span>
+                <span class="text-xs font-medium text-slate-400 bg-slate-100 px-2 py-1 rounded-full whitespace-nowrap ml-2"><i class="far fa-calendar-alt mr-1"></i>${esc(item.date)}</span>
             </div>
             <a href="${esc(item.url)}" target="_blank" onclick="markRead(this, decodeURIComponent('${encodeURIComponent(item.url)}'))" class="block flex-1 flex flex-col group-hover:opacity-100">
                 <h3 class="text-lg font-bold ${textClass} leading-snug group-hover:text-blue-600 transition-colors flex-grow">
@@ -468,18 +597,125 @@ function renderGrid(items, startDate, endDate) {
     }
 }
 
-// ===== AI ダイジェスト =====
+// ===== AI アシスタント(ダイジェスト+質問) =====
+let digestLoadedOnce = false;
+
 function toggleAiDigest() {
     const modal = document.getElementById('digest-modal');
     if (!modal) return;
     if (modal.classList.contains('hidden')) {
         modal.classList.remove('hidden');
         modal.classList.add('flex');
-        loadAiDigest();
+        // 初回表示のみ自動生成(タブを切り替えて戻っても再生成しない)
+        if (!digestLoadedOnce) {
+            digestLoadedOnce = true;
+            loadAiDigest();
+        }
     } else {
         modal.classList.add('hidden');
         modal.classList.remove('flex');
     }
+}
+
+function switchAiTab(tab) {
+    const digestPane = document.getElementById('digest-pane');
+    const askPane = document.getElementById('ask-pane');
+    const isAsk = tab === 'ask';
+    digestPane.classList.toggle('hidden', isAsk);
+    digestPane.classList.toggle('flex', !isAsk);
+    askPane.classList.toggle('hidden', !isAsk);
+    askPane.classList.toggle('flex', isAsk);
+    document.getElementById('tab-digest').classList.toggle('active', !isAsk);
+    document.getElementById('tab-ask').classList.toggle('active', isAsk);
+    if (isAsk) document.getElementById('ask-input').focus();
+}
+
+// 選択中の期間・企業をクエリ条件として集める(/digest・/ask 共通)
+function currentAiScope() {
+    const { startDate, endDate } = getDateRange();
+    const companies = [];
+    document.querySelectorAll('input[name="companies"]:checked').forEach(cb => {
+        companies.push(cb.value);
+    });
+    return { startDate, endDate, companies };
+}
+
+function copyToClipboard(text, btn) {
+    if (!text) return;
+    const done = () => {
+        if (!btn) return;
+        const original = btn.innerHTML;
+        btn.innerHTML = '<i class="fas fa-check mr-1"></i>コピーしました';
+        setTimeout(() => { btn.innerHTML = original; }, 1500);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done).catch(() => {});
+    } else {
+        // 非 HTTPS 環境向けフォールバック
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        done();
+    }
+}
+
+function copyDigest(btn) {
+    copyToClipboard(document.getElementById('digest-content').textContent, btn);
+}
+
+function askAi() {
+    const input = document.getElementById('ask-input');
+    const sendBtn = document.getElementById('ask-send');
+    const log = document.getElementById('ask-log');
+    const question = input.value.trim();
+    if (!question || sendBtn.disabled) return;
+
+    const empty = document.getElementById('ask-empty');
+    if (empty) empty.remove();
+
+    input.value = '';
+    sendBtn.disabled = true;
+
+    const { startDate, endDate, companies } = currentAiScope();
+
+    // 質問バブル+回答プレースホルダを追加
+    const entry = document.createElement('div');
+    entry.innerHTML = `
+        <div class="flex justify-end mb-2"><div class="max-w-[85%] px-4 py-2.5 bg-blue-600 text-white text-sm rounded-2xl rounded-br-sm whitespace-pre-wrap">${esc(question)}</div></div>
+        <div class="flex"><div class="ask-answer max-w-[85%] px-4 py-2.5 bg-slate-100 text-slate-700 text-sm rounded-2xl rounded-bl-sm whitespace-pre-wrap leading-relaxed"><i class="fas fa-circle-notch fa-spin mr-2 text-slate-400"></i>考えています...</div></div>`;
+    log.appendChild(entry);
+    log.scrollTop = log.scrollHeight;
+
+    const answerEl = entry.querySelector('.ask-answer');
+    const finish = (text, isError) => {
+        answerEl.textContent = text;
+        if (isError) {
+            answerEl.classList.remove('bg-slate-100', 'text-slate-700');
+            answerEl.classList.add('bg-red-50', 'text-red-700', 'border', 'border-red-200');
+        }
+        sendBtn.disabled = false;
+        log.scrollTop = log.scrollHeight;
+    };
+
+    fetch('/ask', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question, start_date: startDate, end_date: endDate, companies }),
+    })
+        .then(r => r.json().then(data => ({ ok: r.ok, data })))
+        .then(({ ok, data }) => {
+            if (data.error || !ok) {
+                finish(data.error || '回答の取得に失敗しました。', true);
+            } else if (!data.answer) {
+                finish(data.message || 'この期間の収集済みニュースがありません。', true);
+            } else {
+                finish(data.answer, false);
+            }
+        })
+        .catch(() => finish('サーバーとの通信に失敗しました。', true));
 }
 
 function loadAiDigest() {
