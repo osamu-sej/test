@@ -86,6 +86,12 @@ function markRead(el, url) {
     }
     const card = el.closest('.news-card');
     if (card) card.classList.add('opacity-55');
+    // 未読のみ表示中は、開いた記事を一覧から外す(新規タブへの遷移を妨げないよう少し遅らせる)
+    if (currentFilterMode === 'unread') {
+        setTimeout(() => {
+            if (currentFilterMode === 'unread') filterNews('unread', '');
+        }, 200);
+    }
 }
 
 // ===== CSV エクスポート(表示中の項目) =====
@@ -272,6 +278,13 @@ function updateCacheAndRender(startDate, endDate, newItems, checkedNames) {
         const dk = formatDate(d);
         let dateItems = cache[dk] || [];
 
+        // 削除前に既存の first_seen を控えておき、再検索で NEW バッジが
+        // リセットされないようにする(同一 URL は初回発見時刻を維持)
+        const prevSeen = {};
+        dateItems.forEach(item => {
+            if (item.first_seen) prevSeen[item.url] = item.first_seen;
+        });
+
         if (checkedSet) {
             dateItems = dateItems.filter(item => !checkedSet.has(item.company_name));
         }
@@ -280,7 +293,7 @@ function updateCacheAndRender(startDate, endDate, newItems, checkedNames) {
         newDateItems.forEach(item => {
             if (!dateItems.some(saved => saved.url === item.url)) {
                 // このブラウザで初めて見つけた時刻を記録(「NEW」バッジ表示に使う)
-                dateItems.push({ ...item, first_seen: Date.now() });
+                dateItems.push({ ...item, first_seen: prevSeen[item.url] || Date.now() });
             }
         });
 
