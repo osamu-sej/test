@@ -23,3 +23,27 @@ def test_fetch_max_workers_overridable_by_env(monkeypatch):
     finally:
         monkeypatch.delenv("NEWS_FETCH_MAX_WORKERS", raising=False)
         importlib.reload(scraper)
+
+
+def test_fetch_max_workers_falls_back_on_invalid_value(monkeypatch):
+    """空文字や数値でない値では import 自体を失敗させず、既定値にフォールバックする。"""
+    for bad_value in ("", "abc", "  "):
+        monkeypatch.setenv("NEWS_FETCH_MAX_WORKERS", bad_value)
+        try:
+            reloaded = importlib.reload(scraper)
+            assert reloaded.FETCH_MAX_WORKERS == 5, f"failed for {bad_value!r}"
+        finally:
+            monkeypatch.delenv("NEWS_FETCH_MAX_WORKERS", raising=False)
+            importlib.reload(scraper)
+
+
+def test_fetch_max_workers_clamped_to_at_least_one(monkeypatch):
+    """0 以下の値は ThreadPoolExecutor が拒否するため、最低 1 に切り上げる。"""
+    for bad_value in ("0", "-3"):
+        monkeypatch.setenv("NEWS_FETCH_MAX_WORKERS", bad_value)
+        try:
+            reloaded = importlib.reload(scraper)
+            assert reloaded.FETCH_MAX_WORKERS == 1, f"failed for {bad_value!r}"
+        finally:
+            monkeypatch.delenv("NEWS_FETCH_MAX_WORKERS", raising=False)
+            importlib.reload(scraper)
