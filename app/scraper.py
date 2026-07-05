@@ -1,3 +1,4 @@
+import os
 import re
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor
@@ -24,8 +25,21 @@ REQUEST_HEADERS = {
     "Connection": "keep-alive"
 }
 
-# 同時に張る接続数の上限(相手サイトはすべて別ドメインなので各サイトへは1接続)
-FETCH_MAX_WORKERS = 10
+# 同時に張る接続数の上限(相手サイトはすべて別ドメインなので各サイトへは1接続)。
+# 同時並列数が多いほどピーク時のメモリ使用量が増える(小さいホスティング環境では
+# メモリ超過の原因になりうる)ため、環境変数 NEWS_FETCH_MAX_WORKERS で調整可能にしている。
+# 空文字・数値でない値は既定値5にフォールバックし、0以下の値は1に切り上げる
+# (不正な設定値でアプリの起動やスクレイピング自体が失敗しないようにするため)
+def _parse_fetch_max_workers():
+    raw = os.environ.get("NEWS_FETCH_MAX_WORKERS", "5")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return 5
+    return max(1, value)
+
+
+FETCH_MAX_WORKERS = _parse_fetch_max_workers()
 
 # ==========================================
 #  スクレイピングロジック (NewsScraper)
