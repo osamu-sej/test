@@ -1,5 +1,10 @@
 FROM python:3.11-slim
 
+# git を入れておく(python:3.11-slim には含まれず、Codespaces/devcontainer
+# 経由でビルドすると git コマンドが使えなくなるため)
+RUN apt-get update && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /workspace
 
 COPY requirements.txt ./
