@@ -1,8 +1,10 @@
 import os
 import re
 import unicodedata
+import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+from email.utils import parsedate_to_datetime
 from urllib.parse import urljoin, urlparse, urlunparse
 import requests
 from bs4 import BeautifulSoup
@@ -41,6 +43,27 @@ def _parse_fetch_max_workers():
 
 FETCH_MAX_WORKERS = _parse_fetch_max_workers()
 
+# フィード(RSS/Atom)自動発見の対象となる <link> の type 属性値
+FEED_LINK_TYPES = ("application/rss+xml", "application/atom+xml")
+
+# 日付の隣にある「タイトルではないリンク」を拾わないための除外語
+SIBLING_LINK_IGNORE = {"一覧を見る", "もっと見る", "詳しくはこちら", "詳細はこちら", "続きを読む", "一覧へ", "READ MORE"}
+
+
+def _parse_feed_datetime(text):
+    """フィードの日時文字列(RFC822 / ISO8601)を datetime にする。失敗時は None。"""
+    if not text:
+        return None
+    text = text.strip()
+    try:
+        return parsedate_to_datetime(text)  # 例: Mon, 06 Jul 2026 10:00:00 +0900 (RSS)
+    except (TypeError, ValueError):
+        pass
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00"))  # 例: 2026-07-06T10:00:00+09:00 (Atom)
+    except ValueError:
+        return None
+
 # ==========================================
 #  スクレイピングロジック (NewsScraper)
 # ==========================================
@@ -60,6 +83,82 @@ class NewsScraper:
             return exc
         finally:
             session.close()
+
+    def _feed_candidates(self, company, soup):
+        """この情報源で試すべきフィード URL の候補を返す。
+        1. companies.py に rss_url が設定されていればそれを最優先
+        2. ページの <head> が宣言している RSS/Atom フィード(自動発見)"""
+        candidates = []
+        if company.get("rss_url"):
+            candidates.append(company["rss_url"])
+        if soup is not None:
+            for link in soup.find_all("link"):
+                rel = link.get("rel") or []
+                if isinstance(rel, str):
+                    rel = [rel]
+                link_type = (link.get("type") or "").lower()
+                if "alternate" in [r.lower() for r in rel] and link_type in FEED_LINK_TYPES and link.get("href"):
+                    candidates.append(urljoin(company["url"], link["href"]))
+        # 順序を保って重複除去し、多くても3つまで
+        seen = set()
+        unique = []
+        for c in candidates:
+            if c not in seen:
+                seen.add(c)
+                unique.append(c)
+        return unique[:3]
+
+    def _fetch_feed_items(self, company, feed_url, start_date_str, end_date_str, debug_logs):
+        """RSS 2.0 / Atom フィードから期間内の記事を抽出する。失敗しても例外は投げない。"""
+        try:
+            resp = self.session.get(feed_url, timeout=10.0)
+            if resp.status_code != 200:
+                debug_logs.append(f"Feed {feed_url}: status {resp.status_code}")
+                return []
+            root = ET.fromstring(resp.content)
+        except Exception as exc:
+            debug_logs.append(f"Feed error ({feed_url}): {exc}")
+            return []
+
+        items = []
+        seen = set()
+        for node in root.iter():
+            tag = node.tag.split("}")[-1].lower()
+            if tag not in ("item", "entry"):
+                continue
+            title = link = date_text = None
+            for child in node:
+                ctag = child.tag.split("}")[-1].lower()
+                if ctag == "title":
+                    title = (child.text or "").strip()
+                elif ctag == "link":
+                    # RSS はテキスト、Atom は href 属性
+                    link = (child.text or "").strip() or child.get("href")
+                elif ctag in ("pubdate", "published", "date"):
+                    date_text = child.text
+                elif ctag == "updated" and date_text is None:
+                    date_text = child.text
+            parsed = _parse_feed_datetime(date_text)
+            if not (title and link and parsed):
+                continue
+            found_date_str = parsed.strftime("%Y-%m-%d")
+            if not (start_date_str <= found_date_str <= end_date_str):
+                continue
+            url = urljoin(feed_url, link.strip())
+            key = (url, found_date_str, title)
+            if key in seen:
+                continue
+            seen.add(key)
+            items.append({
+                "company_name": company["name"],
+                "badge_color": company["badge_color"],
+                "title": title[:100] + "..." if len(title) > 100 else title,
+                "url": url,
+                "date": found_date_str,
+                "is_link_only": False,
+                "is_error": False
+            })
+        return items
 
     def _fallback_item(self, company, target_date_str, status_code=None):
         if status_code == 403:
@@ -279,8 +378,19 @@ class NewsScraper:
                             dd_node = element.find_next_sibling('dd')
                             if dd_node: link_tag = dd_node.find('a', href=True)
 
-                        # 2. 自分自身の中にリンクがあるか
-                        if not link_tag: link_tag = element.find('a', href=True)
+                        # 2. 自分自身の中にリンクがあるか。
+                        #    「一覧を見る」等の案内リンクは飛ばしてタイトルらしいリンクを優先し、
+                        #    有効なリンクが1つもなければ従来どおり最初のリンクを使う
+                        #    (リンク文字列が空の画像リンク型サイトを壊さないため)
+                        if not link_tag:
+                            anchors = element.find_all('a', href=True)
+                            if anchors:
+                                link_tag = next(
+                                    (a for a in anchors
+                                     if len(a.get_text(strip=True)) > 4
+                                     and a.get_text(strip=True) not in SIBLING_LINK_IGNORE),
+                                    anchors[0],
+                                )
 
                         # 3. 親や兄弟を探す (少し範囲を広げる)
                         if not link_tag:
@@ -305,6 +415,28 @@ class NewsScraper:
                                         link_tag = max(valid, key=lambda l: len(l.get_text(strip=True)))
                                         break
                                 curr = curr.parent
+
+                        # 4. 日付要素の直後の兄弟要素にリンクがあるパターン
+                        #    (日付とタイトルが別々の div/p として並ぶレイアウト。省庁サイト等に多い)
+                        if not link_tag:
+                            sibling = element.find_next_sibling()
+                            hops = 0
+                            while sibling is not None and hops < 3:
+                                sib_text = unicodedata.normalize("NFKC", sibling.get_text(" ", strip=True))
+                                # 兄弟に別の日付があれば次の行に入ったとみなして打ち切り
+                                if DATE_FLEX_FINDALL_RE.search(sib_text):
+                                    break
+                                cand = sibling if (sibling.name == "a" and sibling.has_attr("href")) else sibling.find("a", href=True)
+                                if cand is not None:
+                                    cand_text = cand.get_text(strip=True)
+                                    if len(cand_text) > 4 and cand_text not in SIBLING_LINK_IGNORE:
+                                        link_tag = cand
+                                        break
+                                sibling = sibling.find_next_sibling()
+                                hops += 1
+
+                        if not link_tag:
+                            debug_logs.append("  (date matched but no link found nearby)")
 
                         if link_tag and link_tag.get("href"):
                             title = link_tag.get_text(strip=True)
@@ -336,6 +468,19 @@ class NewsScraper:
                                 found_count += 1
                                 debug_logs.append(f"  -> Found: {title[:15]}...")
                                 # あえて break しない（同じ日に複数ニュースがある場合のため）
+
+            # --- フィード(RSS/Atom)フォールバック ---
+            # HTML からの抽出が0件だった場合、設定済みの rss_url またはページが
+            # <head> で宣言しているフィードを自動発見して読む。サイトの見た目
+            # (HTML 構造)が変わってもフィードは安定しているため、自己修復として機能する
+            if found_count == 0:
+                for feed_url in self._feed_candidates(company, soup):
+                    feed_items = self._fetch_feed_items(company, feed_url, start_date_str, end_date_str, debug_logs)
+                    if feed_items:
+                        all_items.extend(feed_items)
+                        found_count += len(feed_items)
+                        debug_logs.append(f"  -> Feed fallback: {len(feed_items)} items from {feed_url}")
+                        break
 
             if found_count == 0:
                 debug_logs.append("Result: 0 items found.")
