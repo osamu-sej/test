@@ -139,6 +139,38 @@ def test_atom_fallback(monkeypatch):
     assert items[0]["date"] == "2026-07-06"
 
 
+ATOM_MULTI_LINK_XML = """<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <entry>
+    <title>記事リンクの後に self が並ぶエントリ</title>
+    <link rel="alternate" href="https://example.gov/news/3.html"/>
+    <link rel="self" href="https://example.gov/atom.xml"/>
+    <link rel="enclosure" href="https://example.gov/img/3.jpg"/>
+    <updated>2026-07-06T09:00:00+09:00</updated>
+  </entry>
+  <entry>
+    <title>self が先に来るエントリ</title>
+    <link rel="self" href="https://example.gov/atom.xml"/>
+    <link href="https://example.gov/news/4.html"/>
+    <updated>2026-07-06T10:00:00+09:00</updated>
+  </entry>
+</feed>
+"""
+
+
+def test_atom_multi_link_prefers_alternate(monkeypatch):
+    """Atom エントリに複数の <link> がある場合、記事本体(rel=alternate、
+    rel 省略時も alternate 扱い)を採用し、self や enclosure で汚染されない
+    (Codex レビュー起因の回帰テスト)。"""
+    items, logs, checked = _fetch(monkeypatch, {
+        "/press/": ATOM_DISCOVERY_HTML,
+        "/atom.xml": ATOM_MULTI_LINK_XML,
+    })
+    urls = {i["title"]: i["url"] for i in items}
+    assert urls["記事リンクの後に self が並ぶエントリ"] == "https://example.gov/news/3.html"
+    assert urls["self が先に来るエントリ"] == "https://example.gov/news/4.html"
+
+
 def test_rss_url_config_takes_priority(monkeypatch):
     """companies.py に rss_url を設定すると、head 宣言がなくてもフィードを読む。"""
     company = {**TEST_COMPANY, "rss_url": "https://example.gov/custom-feed.xml"}

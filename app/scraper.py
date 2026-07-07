@@ -127,13 +127,26 @@ class NewsScraper:
             if tag not in ("item", "entry"):
                 continue
             title = link = date_text = None
+            link_is_alternate = False
             for child in node:
                 ctag = child.tag.split("}")[-1].lower()
                 if ctag == "title":
                     title = (child.text or "").strip()
                 elif ctag == "link":
-                    # RSS はテキスト、Atom は href 属性
-                    link = (child.text or "").strip() or child.get("href")
+                    # RSS はテキスト、Atom は href 属性。Atom では1エントリに複数の
+                    # <link>(記事本体 / rel="self" / enclosure 等)が並ぶことがあるため、
+                    # 記事本体を指す rel="alternate"(rel 省略時は alternate 扱い)を優先し、
+                    # 後から来る self や enclosure で上書きしない
+                    candidate = (child.text or "").strip() or child.get("href")
+                    if not candidate:
+                        continue
+                    rel = (child.get("rel") or "alternate").lower()
+                    if rel == "alternate":
+                        if not link_is_alternate:
+                            link = candidate
+                            link_is_alternate = True
+                    elif link is None:
+                        link = candidate
                 elif ctag in ("pubdate", "published", "date"):
                     date_text = child.text
                 elif ctag == "updated" and date_text is None:
