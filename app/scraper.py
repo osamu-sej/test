@@ -28,7 +28,11 @@ REQUEST_HEADERS = {
     "Connection": "keep-alive"
 }
 
-# 1ページから解析する HTML の上限文字数。巨大ページによるメモリ急騰を防ぐ
+# 1ページからダウンロードする上限バイト数。上限に達したら読み止めるため、
+# 異常に巨大なページでも全文がメモリに載ることはない
+MAX_FETCH_BYTES = 3_000_000
+
+# 1ページから解析する HTML の上限文字数(デコード後の第2の防衛線)
 MAX_HTML_CHARS = 2_000_000
 
 # 同時に張る接続数の上限(相手サイトはすべて別ドメインなので各サイトへは1接続)。
@@ -72,11 +76,38 @@ class NewsScraper:
         session = requests.Session()
         session.headers.update(REQUEST_HEADERS)
         try:
-            return session.get(url, timeout=10.0)
+            resp = session.get(url, timeout=10.0, stream=True)
+            self._cap_response_body(resp)
+            return resp
         except Exception as exc:
             return exc
         finally:
             session.close()
+
+    @staticmethod
+    def _cap_response_body(resp):
+        """レスポンス本文を MAX_FETCH_BYTES で読み止めて resp.content として確定する。
+        巨大ページの本文全体をメモリに載せないための処置(全文をダウンロードしてから
+        切り詰めるのではなく、ダウンロード自体を上限で打ち切る)。
+        ストリーミングに対応しないオブジェクト(テスト用ダミー等)はそのまま通す。"""
+        resp._news_truncated = False
+        iter_content = getattr(resp, "iter_content", None)
+        if iter_content is None or getattr(resp, "raw", None) is None:
+            return
+        chunks = []
+        total = 0
+        try:
+            for chunk in iter_content(chunk_size=65536):
+                chunks.append(chunk)
+                total += len(chunk)
+                if total >= MAX_FETCH_BYTES:
+                    resp._news_truncated = True
+                    resp.close()  # 以降のダウンロードを打ち切る
+                    break
+        except Exception:
+            pass  # 途中まで読めた分で続行する(接続断など)
+        resp._content = b"".join(chunks)
+        resp._content_consumed = True
 
     def _feed_candidates(self, company, soup):
         """この情報源で試すべきフィード URL の候補を返す。
@@ -105,7 +136,8 @@ class NewsScraper:
     def _fetch_feed_items(self, company, feed_url, start_date_str, end_date_str, debug_logs):
         """RSS 2.0 / Atom フィードから期間内の記事を抽出する。失敗しても例外は投げない。"""
         try:
-            resp = self.session.get(feed_url, timeout=10.0)
+            resp = self.session.get(feed_url, timeout=10.0, stream=True)
+            self._cap_response_body(resp)
             if resp.status_code != 200:
                 debug_logs.append(f"Feed {feed_url}: status {resp.status_code}")
                 return []
@@ -277,9 +309,10 @@ class NewsScraper:
                     self.last_status[cid] = ("error", resp.status_code)
                     continue
                 else:
+                    if getattr(resp, "_news_truncated", False):
+                        debug_logs.append(f"Page too large (> {MAX_FETCH_BYTES} bytes). Truncated at download.")
                     html_content = resp.text
-                    # 異常に大きいページによるメモリ急騰を防ぐ
-                    # (通常のニュース一覧ページは数十万文字以内)
+                    # デコード後の第2の防衛線(通常のニュース一覧ページは数十万文字以内)
                     if len(html_content) > MAX_HTML_CHARS:
                         debug_logs.append(f"Page too large ({len(html_content)} chars). Truncated.")
                         html_content = html_content[:MAX_HTML_CHARS]

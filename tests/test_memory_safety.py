@@ -88,6 +88,43 @@ def test_large_page_truncated(monkeypatch):
     assert any("Truncated" in l for l in logs)
 
 
+def _make_streaming_response(payload: bytes):
+    """実際の requests のストリーミングレスポンスを模したオブジェクトを作る。"""
+    import io
+    import urllib3
+
+    r = requests.Response()
+    r.status_code = 200
+    r.raw = urllib3.HTTPResponse(body=io.BytesIO(payload), preload_content=False, status=200)
+    return r
+
+
+def test_cap_response_body_stops_download_at_limit():
+    """上限を超える本文はダウンロード段階で読み止められ、全文はメモリに載らない
+    (Codex レビュー起因の回帰テスト: 全文取得後の切り詰めでは手遅れ)。"""
+    payload = b"a" * (scraper.MAX_FETCH_BYTES + 500_000)
+    r = _make_streaming_response(payload)
+    NewsScraper._cap_response_body(r)
+    assert len(r.content) < len(payload)
+    assert len(r.content) <= scraper.MAX_FETCH_BYTES + 65536  # 最終チャンクぶんの余裕
+    assert r._news_truncated is True
+
+
+def test_cap_response_body_keeps_small_body_intact():
+    r = _make_streaming_response(b"<html><body>hello</body></html>")
+    NewsScraper._cap_response_body(r)
+    assert r.content == b"<html><body>hello</body></html>"
+    assert r.text.startswith("<html>")
+    assert r._news_truncated is False
+
+
+def test_cap_response_body_tolerates_non_streaming_objects():
+    """iter_content を持たないオブジェクト(テスト用ダミー等)はそのまま通す。"""
+    fake = FakeResponse(200, "<html></html>")
+    NewsScraper._cap_response_body(fake)
+    assert fake.text == "<html></html>"
+
+
 def test_scheduler_default_interval_is_12_hours():
     assert scheduler.DEFAULT_INTERVAL_SECONDS == 43200
 
