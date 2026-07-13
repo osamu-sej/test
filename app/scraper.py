@@ -11,6 +11,7 @@ from bs4 import BeautifulSoup
 
 # companies.py から設定を読み込む
 from .companies import COMPANIES
+from .envutil import env_int
 
 # 日付抽出用の正規表現(要素ごとに再コンパイルしないよう事前コンパイル)
 DATE_FLEX_FINDALL_RE = re.compile(r"\d{4}\s*[./年]\s*\d{1,2}\s*[./月]\s*\d{1,2}")
@@ -27,21 +28,18 @@ REQUEST_HEADERS = {
     "Connection": "keep-alive"
 }
 
+# 1ページからダウンロードする上限バイト数。上限に達したら読み止めるため、
+# 異常に巨大なページでも全文がメモリに載ることはない
+MAX_FETCH_BYTES = 3_000_000
+
+# 1ページから解析する HTML の上限文字数(デコード後の第2の防衛線)
+MAX_HTML_CHARS = 2_000_000
+
 # 同時に張る接続数の上限(相手サイトはすべて別ドメインなので各サイトへは1接続)。
 # 同時並列数が多いほどピーク時のメモリ使用量が増える(小さいホスティング環境では
-# メモリ超過の原因になりうる)ため、環境変数 NEWS_FETCH_MAX_WORKERS で調整可能にしている。
-# 空文字・数値でない値は既定値5にフォールバックし、0以下の値は1に切り上げる
-# (不正な設定値でアプリの起動やスクレイピング自体が失敗しないようにするため)
-def _parse_fetch_max_workers():
-    raw = os.environ.get("NEWS_FETCH_MAX_WORKERS", "5")
-    try:
-        value = int(raw)
-    except (TypeError, ValueError):
-        return 5
-    return max(1, value)
-
-
-FETCH_MAX_WORKERS = _parse_fetch_max_workers()
+# メモリ超過の原因になりうる)ため、環境変数 NEWS_FETCH_MAX_WORKERS で調整可能。
+# 不正値は既定値5にフォールバックし、0以下は1に切り上げる(envutil.env_int)
+FETCH_MAX_WORKERS = env_int("NEWS_FETCH_MAX_WORKERS", 5, minimum=1)
 
 # フィード(RSS/Atom)自動発見の対象となる <link> の type 属性値
 FEED_LINK_TYPES = ("application/rss+xml", "application/atom+xml")
@@ -78,11 +76,38 @@ class NewsScraper:
         session = requests.Session()
         session.headers.update(REQUEST_HEADERS)
         try:
-            return session.get(url, timeout=10.0)
+            resp = session.get(url, timeout=10.0, stream=True)
+            self._cap_response_body(resp)
+            return resp
         except Exception as exc:
             return exc
         finally:
             session.close()
+
+    @staticmethod
+    def _cap_response_body(resp):
+        """レスポンス本文を MAX_FETCH_BYTES で読み止めて resp.content として確定する。
+        巨大ページの本文全体をメモリに載せないための処置(全文をダウンロードしてから
+        切り詰めるのではなく、ダウンロード自体を上限で打ち切る)。
+        ストリーミングに対応しないオブジェクト(テスト用ダミー等)はそのまま通す。"""
+        resp._news_truncated = False
+        iter_content = getattr(resp, "iter_content", None)
+        if iter_content is None or getattr(resp, "raw", None) is None:
+            return
+        chunks = []
+        total = 0
+        try:
+            for chunk in iter_content(chunk_size=65536):
+                chunks.append(chunk)
+                total += len(chunk)
+                if total >= MAX_FETCH_BYTES:
+                    resp._news_truncated = True
+                    resp.close()  # 以降のダウンロードを打ち切る
+                    break
+        except Exception:
+            pass  # 途中まで読めた分で続行する(接続断など)
+        resp._content = b"".join(chunks)
+        resp._content_consumed = True
 
     def _feed_candidates(self, company, soup):
         """この情報源で試すべきフィード URL の候補を返す。
@@ -111,7 +136,8 @@ class NewsScraper:
     def _fetch_feed_items(self, company, feed_url, start_date_str, end_date_str, debug_logs):
         """RSS 2.0 / Atom フィードから期間内の記事を抽出する。失敗しても例外は投げない。"""
         try:
-            resp = self.session.get(feed_url, timeout=10.0)
+            resp = self.session.get(feed_url, timeout=10.0, stream=True)
+            self._cap_response_body(resp)
             if resp.status_code != 200:
                 debug_logs.append(f"Feed {feed_url}: status {resp.status_code}")
                 return []
@@ -211,20 +237,30 @@ class NewsScraper:
         # インスタンス属性として記録する: {company_id: (status, status_code)}
         self.last_status = {}
 
-        # HTTP取得だけを先に並列実行する(ページの解析・結果の並び・ログは
-        # 従来どおり company_ids の順に直列処理するので出力は変わらない)
+        # HTTP取得はバッチ単位で並列実行する(解析・結果の並び・ログは
+        # 従来どおり company_ids の順に直列処理するので出力は変わらない)。
+        # 以前は全社分のページを一度にメモリへ溜めてから処理していたため、
+        # 収集のたびに「全ページの合計サイズ」までメモリ使用量が跳ね上がっていた。
+        # バッチ方式では同時に保持するページが最大 FETCH_MAX_WORKERS 件に抑えられ、
+        # 小さいホスティング環境でのメモリ制限超過を防ぐ
         fetch_targets = [
             cid for cid in company_ids
             if cid in company_map and company_map[cid].get("scraper_type") != "force_link"
         ]
         prefetched = {}
-        if fetch_targets:
-            with ThreadPoolExecutor(max_workers=min(FETCH_MAX_WORKERS, len(fetch_targets))) as pool:
-                for cid, result in zip(
-                    fetch_targets,
-                    pool.map(lambda c: self._fetch_one(company_map[c]["url"]), fetch_targets),
-                ):
-                    prefetched[cid] = result
+        next_fetch_idx = 0
+
+        def _ensure_fetched(target_cid):
+            nonlocal next_fetch_idx
+            while target_cid not in prefetched and next_fetch_idx < len(fetch_targets):
+                batch = fetch_targets[next_fetch_idx:next_fetch_idx + FETCH_MAX_WORKERS]
+                next_fetch_idx += len(batch)
+                with ThreadPoolExecutor(max_workers=min(FETCH_MAX_WORKERS, len(batch))) as pool:
+                    for c, result in zip(
+                        batch,
+                        pool.map(lambda x: self._fetch_one(company_map[x]["url"]), batch),
+                    ):
+                        prefetched[c] = result
 
         for cid in company_ids:
             company = company_map.get(cid)
@@ -249,7 +285,11 @@ class NewsScraper:
             html_content = None
 
             try:
-                resp = prefetched[cid]
+                _ensure_fetched(cid)
+                # pop で取り出して参照を手放す(処理済みページをメモリに残さない)
+                resp = prefetched.pop(cid, None)
+                if resp is None:
+                    resp = self._fetch_one(company["url"])
                 if isinstance(resp, Exception):
                     raise resp
                 resp.encoding = resp.apparent_encoding
@@ -269,9 +309,17 @@ class NewsScraper:
                     self.last_status[cid] = ("error", resp.status_code)
                     continue
                 else:
+                    if getattr(resp, "_news_truncated", False):
+                        debug_logs.append(f"Page too large (> {MAX_FETCH_BYTES} bytes). Truncated at download.")
                     html_content = resp.text
+                    # デコード後の第2の防衛線(通常のニュース一覧ページは数十万文字以内)
+                    if len(html_content) > MAX_HTML_CHARS:
+                        debug_logs.append(f"Page too large ({len(html_content)} chars). Truncated.")
+                        html_content = html_content[:MAX_HTML_CHARS]
 
+                resp = None  # ページ本文の生データはもう不要。参照を切って解放
                 soup = BeautifulSoup(html_content, "html.parser")
+                html_content = None  # 解析ツリーができたら文字列側も解放
 
             except Exception as exc:
                 debug_logs.append(f"Exception: {exc}")
@@ -494,6 +542,10 @@ class NewsScraper:
                         found_count += len(feed_items)
                         debug_logs.append(f"  -> Feed fallback: {len(feed_items)} items from {feed_url}")
                         break
+
+            # 解析ツリーを明示的に解放する。BeautifulSoup のツリーは循環参照を
+            # 含むため、放置すると GC が回るまでメモリに残り続ける
+            soup.decompose()
 
             if found_count == 0:
                 debug_logs.append("Result: 0 items found.")

@@ -18,7 +18,7 @@ from . import ai, scheduler, service, storage
 from .scraper import NewsScraper  # noqa: F401
 
 # アプリのバージョン。改修のたびに更新する(画面左下・X-App-Version ヘッダー・/docs に表示される)
-APP_VERSION = "1.6.0"
+APP_VERSION = "1.6.1"
 
 # AI ダイジェストのキャッシュ有効期間(秒)
 DIGEST_CACHE_TTL = 1800

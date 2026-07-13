@@ -3,22 +3,29 @@
 
 環境変数:
 - NEWS_SCHEDULER=off              スケジューラを無効化(テスト等)
-- NEWS_SCHEDULER_INTERVAL=1800    収集間隔(秒)
+- NEWS_SCHEDULER_INTERVAL=43200   収集間隔(秒)。既定は12時間おき
 - NEWS_SCHEDULER_INITIAL_DELAY=15 起動から初回収集までの待ち(秒)
 """
 import logging
 import os
 import threading
 
+from .envutil import env_int
+
 logger = logging.getLogger("uvicorn.error")
+
+# 既定の収集間隔: 12時間。頻繁な全社収集はメモリ・CPU のピークを生むため、
+# 小さいホスティング環境でも安全な頻度を既定とする(ページを開いたときの
+# オンデマンド収集は別途キャッシュ鮮度 TTL に従って行われる)
+DEFAULT_INTERVAL_SECONDS = 43200
 
 
 def start():
     """スケジューラスレッドを開始し、停止用の Event を返す(無効時は None)。"""
     if os.environ.get("NEWS_SCHEDULER", "on").lower() in ("off", "0", "false"):
         return None
-    interval = int(os.environ.get("NEWS_SCHEDULER_INTERVAL", "1800"))
-    initial_delay = int(os.environ.get("NEWS_SCHEDULER_INITIAL_DELAY", "15"))
+    interval = env_int("NEWS_SCHEDULER_INTERVAL", DEFAULT_INTERVAL_SECONDS, minimum=60)
+    initial_delay = env_int("NEWS_SCHEDULER_INITIAL_DELAY", 15, minimum=0)
     stop_event = threading.Event()
 
     def loop():

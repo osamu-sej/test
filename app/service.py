@@ -5,18 +5,18 @@
 画面へ返す形式(items, logs, checked_names)はスクレイパー単体の
 出力と互換で、フロントエンドはこの層の存在を意識しない。
 """
-import os
 import time
 from datetime import datetime, timedelta
 
 from .companies import COMPANIES
+from .envutil import env_int
 from .scraper import NewsScraper
 from . import storage
 
-# キャッシュの鮮度(秒)。環境変数で調整可能
-TTL_TODAY = int(os.environ.get("NEWS_TTL_TODAY", "1800"))    # 今日を含む日付: 30分
-TTL_PAST = int(os.environ.get("NEWS_TTL_PAST", "86400"))     # 過去日: 24時間
-TTL_ERROR = int(os.environ.get("NEWS_TTL_ERROR", "300"))     # エラーだった企業: 5分で再試行
+# キャッシュの鮮度(秒)。環境変数で調整可能(不正値は既定値にフォールバック)
+TTL_TODAY = env_int("NEWS_TTL_TODAY", 1800, minimum=0)    # 今日を含む日付: 30分
+TTL_PAST = env_int("NEWS_TTL_PAST", 86400, minimum=0)     # 過去日: 24時間
+TTL_ERROR = env_int("NEWS_TTL_ERROR", 300, minimum=0)     # エラーだった企業: 5分で再試行
 
 # coverage 記録の日数上限(異常に広い範囲を指定されたときの暴走防止。
 # 上限を超えた分はキャッシュ対象外となり毎回スクレイピングされるだけで、結果は正しい)
