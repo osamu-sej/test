@@ -10,8 +10,6 @@
 """
 import os
 
-import anthropic
-
 DEFAULT_MODEL = "claude-opus-4-8"
 
 # ダイジェストに含める最大ニュース件数(入力トークンの暴走防止)
@@ -54,6 +52,10 @@ def _build_prompt(items, start_date, end_date):
 def generate_digest(items, start_date, end_date) -> str:
     """ニュース項目のリストからダイジェスト本文(プレーンテキスト)を生成する。
     失敗時は AIDigestError を送出する。"""
+    # anthropic ライブラリは重いため、実際にダイジェストを生成する瞬間まで
+    # 読み込まない(AI 機能を使わない環境での常駐メモリを節約する)
+    import anthropic
+
     client = anthropic.Anthropic()
     try:
         response = client.messages.create(
