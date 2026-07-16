@@ -9,6 +9,7 @@ from fastapi import FastAPI, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel
 
 # companies.py から設定を読み込む
 from .companies import COMPANIES
@@ -18,10 +19,13 @@ from . import ai, scheduler, service, storage
 from .scraper import NewsScraper  # noqa: F401
 
 # アプリのバージョン。改修のたびに更新する(画面左下・X-App-Version ヘッダー・/docs に表示される)
-APP_VERSION = "1.6.1"
+APP_VERSION = "1.7.0"
 
-# AI ダイジェストのキャッシュ有効期間(秒)
+# AI ダイジェスト/Q&A のキャッシュ有効期間(秒)
 DIGEST_CACHE_TTL = 1800
+
+# AI への質問の最大文字数
+MAX_QUESTION_LEN = 500
 
 # 情報源の「新着停止」警告: 直近 ACTIVE_WINDOW 日以内に実績があるのに
 # WARN_DAYS 日を超えて新着ゼロの情報源を、サイト構造変更の可能性として警告する
@@ -117,12 +121,10 @@ def read_root(request: Request, start_date: str = Query(None), end_date: str = Q
     # スクレイピング中もイベントループが他のリクエストを処理できる
 
     today = datetime.now()
-    today_str = today.strftime("%Y-%m-%d")
     # 初期状態は全選択
     selected_ids = companies if companies else [c["id"] for c in COMPANIES]
 
-    start_date_str = start_date if start_date and DATE_PARAM_RE.match(start_date) else today_str
-    end_date_str = end_date if end_date and DATE_PARAM_RE.match(end_date) else today_str
+    start_date_str, end_date_str = _normalize_dates(start_date, end_date)
 
     items, logs, checked_names, last_collected = service.get_news(
         selected_ids, start_date_str, end_date_str, force=(force == "1")
@@ -141,6 +143,8 @@ def read_root(request: Request, start_date: str = Query(None), end_date: str = Q
             "sidebar_html": generate_sidebar_html(selected_ids),
             "items_json": script_safe_json(items),
             "checked_names_json": script_safe_json(checked_names),
+            # CSV エクスポートの「業態」列用: 企業名 → カテゴリのマップ
+            "company_categories_json": script_safe_json({c["name"]: c["category"] for c in COMPANIES}),
             "logs": logs,
             "last_collected": last_collected_str,
             "ai_enabled": ai.is_enabled(),
@@ -155,35 +159,51 @@ def read_root(request: Request, start_date: str = Query(None), end_date: str = Q
     )
 
 
+def _normalize_dates(start_date, end_date):
+    """日付クエリを検証し、不正・未指定は今日にフォールバックする。"""
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    start_str = start_date if start_date and DATE_PARAM_RE.match(start_date) else today_str
+    end_str = end_date if end_date and DATE_PARAM_RE.match(end_date) else today_str
+    return start_str, end_str
+
+
+def _collect_stored_items(companies, start_date_str, end_date_str):
+    """収集済みニュース(SQLite)を対象企業・期間で集める。(selected_ids, items) を返す。"""
+    valid_ids = {c["id"] for c in COMPANIES}
+    selected_ids = [cid for cid in (companies or []) if cid in valid_ids] or [c["id"] for c in COMPANIES]
+    items = []
+    for cid in selected_ids:
+        items.extend(storage.get_items(cid, start_date_str, end_date_str))
+    items.sort(key=lambda i: i["date"])
+    return selected_ids, items
+
+
+def _ai_cache_key(kind, selected_ids, items, start_date_str, end_date_str, extra=""):
+    """同一条件+同一ニュース集合で一致する AI 結果キャッシュのキーを作る。"""
+    key_src = f"{kind}|{extra}|{start_date_str}|{end_date_str}|{','.join(sorted(selected_ids))}|" + \
+              "|".join(sorted(i["url"] for i in items))
+    return hashlib.sha256(key_src.encode()).hexdigest()
+
+
+NO_ITEMS_MESSAGE = "この期間の収集済みニュースがありません。先に「SEARCH NEWS」で収集してください。"
+AI_DISABLED_MESSAGE = "AI 機能が無効です(ANTHROPIC_API_KEY 未設定)。"
+
+
 @app.get("/digest")
 def get_digest(start_date: str = Query(None), end_date: str = Query(None), companies: list[str] = Query(None)):
     """収集済みニュース(SQLite)から AI ダイジェストを生成して返す。
     スクレイピングは行わない — 先に通常の検索で収集されていることが前提。"""
     if not ai.is_enabled():
-        return JSONResponse({"enabled": False, "error": "AI 機能が無効です(ANTHROPIC_API_KEY 未設定)。"})
+        return JSONResponse({"enabled": False, "error": AI_DISABLED_MESSAGE})
 
-    today_str = datetime.now().strftime("%Y-%m-%d")
-    start_date_str = start_date if start_date and DATE_PARAM_RE.match(start_date) else today_str
-    end_date_str = end_date if end_date and DATE_PARAM_RE.match(end_date) else today_str
-    valid_ids = {c["id"] for c in COMPANIES}
-    selected_ids = [cid for cid in (companies or []) if cid in valid_ids] or [c["id"] for c in COMPANIES]
-
-    items = []
-    for cid in selected_ids:
-        items.extend(storage.get_items(cid, start_date_str, end_date_str))
-    items.sort(key=lambda i: i["date"])
+    start_date_str, end_date_str = _normalize_dates(start_date, end_date)
+    selected_ids, items = _collect_stored_items(companies, start_date_str, end_date_str)
 
     if not items:
-        return JSONResponse({
-            "enabled": True,
-            "digest": None,
-            "message": "この期間の収集済みニュースがありません。先に「SEARCH NEWS」で収集してください。",
-        })
+        return JSONResponse({"enabled": True, "digest": None, "message": NO_ITEMS_MESSAGE})
 
     # 同一条件+同一ニュース集合なら30分間はキャッシュを返す(API コスト削減)
-    key_src = f"{start_date_str}|{end_date_str}|{','.join(sorted(selected_ids))}|" + \
-              "|".join(sorted(i["url"] for i in items))
-    cache_key = hashlib.sha256(key_src.encode()).hexdigest()
+    cache_key = _ai_cache_key("digest", selected_ids, items, start_date_str, end_date_str)
     cached = storage.get_digest(cache_key, DIGEST_CACHE_TTL)
     if cached:
         return JSONResponse({"enabled": True, "digest": cached, "cached": True, "item_count": len(items)})
@@ -195,3 +215,46 @@ def get_digest(start_date: str = Query(None), end_date: str = Query(None), compa
 
     storage.save_digest(cache_key, digest)
     return JSONResponse({"enabled": True, "digest": digest, "cached": False, "item_count": len(items)})
+
+
+class AskRequest(BaseModel):
+    question: str = ""
+    start_date: str | None = None
+    end_date: str | None = None
+    companies: list[str] | None = None
+
+
+@app.post("/ask")
+def ask_question(req: AskRequest):
+    """収集済みニュース(SQLite)を根拠に、ユーザーの質問へ AI が回答する。
+    /digest と同じく、先に通常の検索で収集されていることが前提。"""
+    if not ai.is_enabled():
+        return JSONResponse({"enabled": False, "error": AI_DISABLED_MESSAGE})
+
+    question = (req.question or "").strip()
+    if not question:
+        return JSONResponse({"enabled": True, "error": "質問を入力してください。"}, status_code=400)
+    if len(question) > MAX_QUESTION_LEN:
+        return JSONResponse(
+            {"enabled": True, "error": f"質問は {MAX_QUESTION_LEN} 字以内で入力してください。"}, status_code=400
+        )
+
+    start_date_str, end_date_str = _normalize_dates(req.start_date, req.end_date)
+    selected_ids, items = _collect_stored_items(req.companies, start_date_str, end_date_str)
+
+    if not items:
+        return JSONResponse({"enabled": True, "answer": None, "message": NO_ITEMS_MESSAGE})
+
+    # 同一質問+同一条件+同一ニュース集合なら30分間はキャッシュを返す(API コスト削減)
+    cache_key = _ai_cache_key("ask", selected_ids, items, start_date_str, end_date_str, extra=question)
+    cached = storage.get_digest(cache_key, DIGEST_CACHE_TTL)
+    if cached:
+        return JSONResponse({"enabled": True, "answer": cached, "cached": True, "item_count": len(items)})
+
+    try:
+        answer = ai.answer_question(question, items, start_date_str, end_date_str)
+    except ai.AIDigestError as exc:
+        return JSONResponse({"enabled": True, "error": str(exc)}, status_code=502)
+
+    storage.save_digest(cache_key, answer)
+    return JSONResponse({"enabled": True, "answer": answer, "cached": False, "item_count": len(items)})

@@ -1,8 +1,10 @@
-"""Claude API による AI ダイジェスト生成。
+"""Claude API による AI 機能(ダイジェスト生成・Q&A)。
 
-収集済みニュースのタイトル一覧から、その日の小売業界動向の
-要約ダイジェストを生成する。API キー(ANTHROPIC_API_KEY)が
-設定されていない場合、この機能は無効となり UI にも表示されない。
+収集済みニュースのタイトル一覧を根拠として、
+- 業界動向の要約ダイジェスト(generate_digest)
+- ユーザーの自由質問への回答(answer_question)
+を生成する。API キー(ANTHROPIC_API_KEY)が設定されていない場合、
+これらの機能は無効となり UI にも表示されない。
 
 環境変数:
 - ANTHROPIC_API_KEY   Claude API キー(必須。未設定なら機能オフ)
@@ -12,10 +14,10 @@ import os
 
 DEFAULT_MODEL = "claude-opus-4-8"
 
-# ダイジェストに含める最大ニュース件数(入力トークンの暴走防止)
+# プロンプトに含める最大ニュース件数(入力トークンの暴走防止)
 MAX_ITEMS = 200
 
-SYSTEM_PROMPT = """あなたは日本の小売業界(コンビニ・スーパー・ドラッグストア・食品メーカー等)を専門とするアナリストです。
+DIGEST_SYSTEM_PROMPT = """あなたは日本の小売業界(コンビニ・スーパー・ドラッグストア・食品メーカー等)を専門とするアナリストです。
 各社の公式ニュースリリースのタイトル一覧から、業界動向のダイジェストを作成します。
 
 出力ルール:
@@ -25,9 +27,19 @@ SYSTEM_PROMPT = """あなたは日本の小売業界(コンビニ・スーパー
 - タイトルから確実に読み取れる内容だけを書き、推測で事実を補わない
 - 全体で600字〜900字程度に収める"""
 
+QA_SYSTEM_PROMPT = """あなたは日本の小売業界(コンビニ・スーパー・ドラッグストア・食品メーカー等)を専門とするアナリストです。
+各社の公式ニュースリリースのタイトル一覧を根拠として、ユーザーからの質問に答えます。
+
+出力ルール:
+- 日本語で、プレーンテキストのみ(Markdown 記法は使わない)
+- 回答の根拠となるニュースは「[日付] 企業名: タイトル」の形で挙げる
+- タイトル一覧から読み取れないことは、推測で補わず「提供されたニュースからは判断できません」と明示する
+- ニュースと無関係な質問には、この期間の収集済みニュースについて答える役割であることを短く伝える
+- 簡潔に、全体で400字程度までに収める"""
+
 
 class AIDigestError(Exception):
-    """ユーザーに表示するためのダイジェスト生成エラー。"""
+    """ユーザーに表示するための AI 生成エラー。"""
 
 
 def is_enabled() -> bool:
@@ -38,22 +50,19 @@ def model_name() -> str:
     return os.environ.get("NEWS_AI_MODEL", DEFAULT_MODEL)
 
 
-def _build_prompt(items, start_date, end_date):
+def _items_lines(items, start_date, end_date):
     lines = [f"対象期間: {start_date} 〜 {end_date}", f"ニュース件数: {len(items)}件", "", "--- ニュース一覧 ---"]
     for it in items[:MAX_ITEMS]:
         lines.append(f"[{it['date']}] {it['company_name']}: {it['title']}")
     if len(items) > MAX_ITEMS:
         lines.append(f"(ほか {len(items) - MAX_ITEMS} 件は省略)")
-    lines.append("")
-    lines.append("上記のニュース一覧から業界動向ダイジェストを作成してください。")
-    return "\n".join(lines)
+    return lines
 
 
-def generate_digest(items, start_date, end_date) -> str:
-    """ニュース項目のリストからダイジェスト本文(プレーンテキスト)を生成する。
-    失敗時は AIDigestError を送出する。"""
-    # anthropic ライブラリは重いため、実際にダイジェストを生成する瞬間まで
-    # 読み込まない(AI 機能を使わない環境での常駐メモリを節約する)
+def _call_claude(system_prompt, user_prompt) -> str:
+    """Claude API を呼び出して本文テキストを返す。失敗時は AIDigestError を送出する。"""
+    # anthropic ライブラリは重いため、実際に生成する瞬間まで読み込まない
+    # (AI 機能を使わない環境での常駐メモリを節約する)
     import anthropic
 
     client = anthropic.Anthropic()
@@ -62,8 +71,8 @@ def generate_digest(items, start_date, end_date) -> str:
             model=model_name(),
             max_tokens=16000,
             thinking={"type": "adaptive"},
-            system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": _build_prompt(items, start_date, end_date)}],
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_prompt}],
         )
     except anthropic.AuthenticationError:
         raise AIDigestError("Claude API キーが無効です。ANTHROPIC_API_KEY を確認してください。")
@@ -77,9 +86,28 @@ def generate_digest(items, start_date, end_date) -> str:
         raise AIDigestError("Claude API に接続できません。サーバーのネットワーク設定を確認してください。")
 
     if response.stop_reason == "refusal":
-        raise AIDigestError("この内容のダイジェストは生成できませんでした。期間や対象企業を変えて再試行してください。")
+        raise AIDigestError("この内容には回答できませんでした。期間や対象企業、質問内容を変えて再試行してください。")
 
     text = next((b.text for b in response.content if b.type == "text"), "")
     if not text.strip():
-        raise AIDigestError("ダイジェストの生成結果が空でした。再試行してください。")
+        raise AIDigestError("生成結果が空でした。再試行してください。")
     return text.strip()
+
+
+def generate_digest(items, start_date, end_date) -> str:
+    """ニュース項目のリストからダイジェスト本文(プレーンテキスト)を生成する。
+    失敗時は AIDigestError を送出する。"""
+    lines = _items_lines(items, start_date, end_date)
+    lines.append("")
+    lines.append("上記のニュース一覧から業界動向ダイジェストを作成してください。")
+    return _call_claude(DIGEST_SYSTEM_PROMPT, "\n".join(lines))
+
+
+def answer_question(question, items, start_date, end_date) -> str:
+    """収集済みニュースを根拠に、ユーザーの質問への回答を生成する。
+    失敗時は AIDigestError を送出する。"""
+    lines = _items_lines(items, start_date, end_date)
+    lines.append("")
+    lines.append("--- 質問 ---")
+    lines.append(question)
+    return _call_claude(QA_SYSTEM_PROMPT, "\n".join(lines))
