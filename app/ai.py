@@ -12,8 +12,6 @@
 """
 import os
 
-import anthropic
-
 DEFAULT_MODEL = "claude-opus-4-8"
 
 # プロンプトに含める最大ニュース件数(入力トークンの暴走防止)
@@ -63,6 +61,10 @@ def _items_lines(items, start_date, end_date):
 
 def _call_claude(system_prompt, user_prompt) -> str:
     """Claude API を呼び出して本文テキストを返す。失敗時は AIDigestError を送出する。"""
+    # anthropic ライブラリは重いため、実際に生成する瞬間まで読み込まない
+    # (AI 機能を使わない環境での常駐メモリを節約する)
+    import anthropic
+
     client = anthropic.Anthropic()
     try:
         response = client.messages.create(

@@ -1,13 +1,17 @@
+import os
 import re
 import unicodedata
+import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+from email.utils import parsedate_to_datetime
 from urllib.parse import urljoin, urlparse, urlunparse
 import requests
 from bs4 import BeautifulSoup
 
 # companies.py から設定を読み込む
 from .companies import COMPANIES
+from .envutil import env_int
 
 # 日付抽出用の正規表現(要素ごとに再コンパイルしないよう事前コンパイル)
 DATE_FLEX_FINDALL_RE = re.compile(r"\d{4}\s*[./年]\s*\d{1,2}\s*[./月]\s*\d{1,2}")
@@ -34,8 +38,39 @@ REQUEST_HEADERS = {
     "sec-ch-ua-platform": '"Windows"',
 }
 
-# 同時に張る接続数の上限(相手サイトはすべて別ドメインなので各サイトへは1接続)
-FETCH_MAX_WORKERS = 10
+# 1ページからダウンロードする上限バイト数。上限に達したら読み止めるため、
+# 異常に巨大なページでも全文がメモリに載ることはない
+MAX_FETCH_BYTES = 3_000_000
+
+# 1ページから解析する HTML の上限文字数(デコード後の第2の防衛線)
+MAX_HTML_CHARS = 2_000_000
+
+# 同時に張る接続数の上限(相手サイトはすべて別ドメインなので各サイトへは1接続)。
+# 同時並列数が多いほどピーク時のメモリ使用量が増える(小さいホスティング環境では
+# メモリ超過の原因になりうる)ため、環境変数 NEWS_FETCH_MAX_WORKERS で調整可能。
+# 不正値は既定値5にフォールバックし、0以下は1に切り上げる(envutil.env_int)
+FETCH_MAX_WORKERS = env_int("NEWS_FETCH_MAX_WORKERS", 5, minimum=1)
+
+# フィード(RSS/Atom)自動発見の対象となる <link> の type 属性値
+FEED_LINK_TYPES = ("application/rss+xml", "application/atom+xml")
+
+# 日付の隣にある「タイトルではないリンク」を拾わないための除外語
+SIBLING_LINK_IGNORE = {"一覧を見る", "もっと見る", "詳しくはこちら", "詳細はこちら", "続きを読む", "一覧へ", "READ MORE"}
+
+
+def _parse_feed_datetime(text):
+    """フィードの日時文字列(RFC822 / ISO8601)を datetime にする。失敗時は None。"""
+    if not text:
+        return None
+    text = text.strip()
+    try:
+        return parsedate_to_datetime(text)  # 例: Mon, 06 Jul 2026 10:00:00 +0900 (RSS)
+    except (TypeError, ValueError):
+        pass
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00"))  # 例: 2026-07-06T10:00:00+09:00 (Atom)
+    except ValueError:
+        return None
 
 # ==========================================
 #  スクレイピングロジック (NewsScraper)
@@ -51,11 +86,128 @@ class NewsScraper:
         session = requests.Session()
         session.headers.update(REQUEST_HEADERS)
         try:
-            return session.get(url, timeout=10.0)
+            resp = session.get(url, timeout=10.0, stream=True)
+            self._cap_response_body(resp)
+            return resp
         except Exception as exc:
             return exc
         finally:
             session.close()
+
+    @staticmethod
+    def _cap_response_body(resp):
+        """レスポンス本文を MAX_FETCH_BYTES で読み止めて resp.content として確定する。
+        巨大ページの本文全体をメモリに載せないための処置(全文をダウンロードしてから
+        切り詰めるのではなく、ダウンロード自体を上限で打ち切る)。
+        ストリーミングに対応しないオブジェクト(テスト用ダミー等)はそのまま通す。"""
+        resp._news_truncated = False
+        iter_content = getattr(resp, "iter_content", None)
+        if iter_content is None or getattr(resp, "raw", None) is None:
+            return
+        chunks = []
+        total = 0
+        try:
+            for chunk in iter_content(chunk_size=65536):
+                chunks.append(chunk)
+                total += len(chunk)
+                if total >= MAX_FETCH_BYTES:
+                    resp._news_truncated = True
+                    resp.close()  # 以降のダウンロードを打ち切る
+                    break
+        except Exception:
+            pass  # 途中まで読めた分で続行する(接続断など)
+        resp._content = b"".join(chunks)
+        resp._content_consumed = True
+
+    def _feed_candidates(self, company, soup):
+        """この情報源で試すべきフィード URL の候補を返す。
+        1. companies.py に rss_url が設定されていればそれを最優先
+        2. ページの <head> が宣言している RSS/Atom フィード(自動発見)"""
+        candidates = []
+        if company.get("rss_url"):
+            candidates.append(company["rss_url"])
+        if soup is not None:
+            for link in soup.find_all("link"):
+                rel = link.get("rel") or []
+                if isinstance(rel, str):
+                    rel = [rel]
+                link_type = (link.get("type") or "").lower()
+                if "alternate" in [r.lower() for r in rel] and link_type in FEED_LINK_TYPES and link.get("href"):
+                    candidates.append(urljoin(company["url"], link["href"]))
+        # 順序を保って重複除去し、多くても3つまで
+        seen = set()
+        unique = []
+        for c in candidates:
+            if c not in seen:
+                seen.add(c)
+                unique.append(c)
+        return unique[:3]
+
+    def _fetch_feed_items(self, company, feed_url, start_date_str, end_date_str, debug_logs):
+        """RSS 2.0 / Atom フィードから期間内の記事を抽出する。失敗しても例外は投げない。"""
+        try:
+            resp = self.session.get(feed_url, timeout=10.0, stream=True)
+            self._cap_response_body(resp)
+            if resp.status_code != 200:
+                debug_logs.append(f"Feed {feed_url}: status {resp.status_code}")
+                return []
+            root = ET.fromstring(resp.content)
+        except Exception as exc:
+            debug_logs.append(f"Feed error ({feed_url}): {exc}")
+            return []
+
+        items = []
+        seen = set()
+        for node in root.iter():
+            tag = node.tag.split("}")[-1].lower()
+            if tag not in ("item", "entry"):
+                continue
+            title = link = date_text = None
+            link_is_alternate = False
+            for child in node:
+                ctag = child.tag.split("}")[-1].lower()
+                if ctag == "title":
+                    title = (child.text or "").strip()
+                elif ctag == "link":
+                    # RSS はテキスト、Atom は href 属性。Atom では1エントリに複数の
+                    # <link>(記事本体 / rel="self" / enclosure 等)が並ぶことがあるため、
+                    # 記事本体を指す rel="alternate"(rel 省略時は alternate 扱い)を優先し、
+                    # 後から来る self や enclosure で上書きしない
+                    candidate = (child.text or "").strip() or child.get("href")
+                    if not candidate:
+                        continue
+                    rel = (child.get("rel") or "alternate").lower()
+                    if rel == "alternate":
+                        if not link_is_alternate:
+                            link = candidate
+                            link_is_alternate = True
+                    elif link is None:
+                        link = candidate
+                elif ctag in ("pubdate", "published", "date"):
+                    date_text = child.text
+                elif ctag == "updated" and date_text is None:
+                    date_text = child.text
+            parsed = _parse_feed_datetime(date_text)
+            if not (title and link and parsed):
+                continue
+            found_date_str = parsed.strftime("%Y-%m-%d")
+            if not (start_date_str <= found_date_str <= end_date_str):
+                continue
+            url = urljoin(feed_url, link.strip())
+            key = (url, found_date_str, title)
+            if key in seen:
+                continue
+            seen.add(key)
+            items.append({
+                "company_name": company["name"],
+                "badge_color": company["badge_color"],
+                "title": title[:100] + "..." if len(title) > 100 else title,
+                "url": url,
+                "date": found_date_str,
+                "is_link_only": False,
+                "is_error": False
+            })
+        return items
 
     def _fallback_item(self, company, target_date_str, status_code=None):
         if status_code == 403:
@@ -95,20 +247,30 @@ class NewsScraper:
         # インスタンス属性として記録する: {company_id: (status, status_code)}
         self.last_status = {}
 
-        # HTTP取得だけを先に並列実行する(ページの解析・結果の並び・ログは
-        # 従来どおり company_ids の順に直列処理するので出力は変わらない)
+        # HTTP取得はバッチ単位で並列実行する(解析・結果の並び・ログは
+        # 従来どおり company_ids の順に直列処理するので出力は変わらない)。
+        # 以前は全社分のページを一度にメモリへ溜めてから処理していたため、
+        # 収集のたびに「全ページの合計サイズ」までメモリ使用量が跳ね上がっていた。
+        # バッチ方式では同時に保持するページが最大 FETCH_MAX_WORKERS 件に抑えられ、
+        # 小さいホスティング環境でのメモリ制限超過を防ぐ
         fetch_targets = [
             cid for cid in company_ids
             if cid in company_map and company_map[cid].get("scraper_type") != "force_link"
         ]
         prefetched = {}
-        if fetch_targets:
-            with ThreadPoolExecutor(max_workers=min(FETCH_MAX_WORKERS, len(fetch_targets))) as pool:
-                for cid, result in zip(
-                    fetch_targets,
-                    pool.map(lambda c: self._fetch_one(company_map[c]["url"]), fetch_targets),
-                ):
-                    prefetched[cid] = result
+        next_fetch_idx = 0
+
+        def _ensure_fetched(target_cid):
+            nonlocal next_fetch_idx
+            while target_cid not in prefetched and next_fetch_idx < len(fetch_targets):
+                batch = fetch_targets[next_fetch_idx:next_fetch_idx + FETCH_MAX_WORKERS]
+                next_fetch_idx += len(batch)
+                with ThreadPoolExecutor(max_workers=min(FETCH_MAX_WORKERS, len(batch))) as pool:
+                    for c, result in zip(
+                        batch,
+                        pool.map(lambda x: self._fetch_one(company_map[x]["url"]), batch),
+                    ):
+                        prefetched[c] = result
 
         for cid in company_ids:
             company = company_map.get(cid)
@@ -133,7 +295,11 @@ class NewsScraper:
             html_content = None
 
             try:
-                resp = prefetched[cid]
+                _ensure_fetched(cid)
+                # pop で取り出して参照を手放す(処理済みページをメモリに残さない)
+                resp = prefetched.pop(cid, None)
+                if resp is None:
+                    resp = self._fetch_one(company["url"])
                 if isinstance(resp, Exception):
                     raise resp
                 resp.encoding = resp.apparent_encoding
@@ -153,9 +319,17 @@ class NewsScraper:
                     self.last_status[cid] = ("error", resp.status_code)
                     continue
                 else:
+                    if getattr(resp, "_news_truncated", False):
+                        debug_logs.append(f"Page too large (> {MAX_FETCH_BYTES} bytes). Truncated at download.")
                     html_content = resp.text
+                    # デコード後の第2の防衛線(通常のニュース一覧ページは数十万文字以内)
+                    if len(html_content) > MAX_HTML_CHARS:
+                        debug_logs.append(f"Page too large ({len(html_content)} chars). Truncated.")
+                        html_content = html_content[:MAX_HTML_CHARS]
 
+                resp = None  # ページ本文の生データはもう不要。参照を切って解放
                 soup = BeautifulSoup(html_content, "html.parser")
+                html_content = None  # 解析ツリーができたら文字列側も解放
 
             except Exception as exc:
                 debug_logs.append(f"Exception: {exc}")
@@ -245,7 +419,11 @@ class NewsScraper:
             # 「採点」や「強力検索」などの余計なことはせず、シンプルに探す
             if found_count == 0:
                 target_tags = soup.find_all(['dt', 'dd', 'li', 'div', 'p', 'span', 'time', 'td', 'tr'])
-                processed_urls = set()
+                # (url, date, title) で重複判定する。入れ子要素(例: li の中の div)が
+                # 同じ記事を二重に拾うのを防ぎつつ、統計ページ等の「同じURLに日付違いの
+                # お知らせが複数リンクする」ケースを別記事として残すため、url 単独ではなく
+                # 日付・タイトルまで含めたキーにしている
+                processed_keys = set()
 
                 for element in target_tags:
                     full_text = unicodedata.normalize("NFKC", element.get_text(" ", strip=True))
@@ -271,8 +449,19 @@ class NewsScraper:
                             dd_node = element.find_next_sibling('dd')
                             if dd_node: link_tag = dd_node.find('a', href=True)
 
-                        # 2. 自分自身の中にリンクがあるか
-                        if not link_tag: link_tag = element.find('a', href=True)
+                        # 2. 自分自身の中にリンクがあるか。
+                        #    「一覧を見る」等の案内リンクは飛ばしてタイトルらしいリンクを優先し、
+                        #    有効なリンクが1つもなければ従来どおり最初のリンクを使う
+                        #    (リンク文字列が空の画像リンク型サイトを壊さないため)
+                        if not link_tag:
+                            anchors = element.find_all('a', href=True)
+                            if anchors:
+                                link_tag = next(
+                                    (a for a in anchors
+                                     if len(a.get_text(strip=True)) > 4
+                                     and a.get_text(strip=True) not in SIBLING_LINK_IGNORE),
+                                    anchors[0],
+                                )
 
                         # 3. 親や兄弟を探す (少し範囲を広げる)
                         if not link_tag:
@@ -298,6 +487,28 @@ class NewsScraper:
                                         break
                                 curr = curr.parent
 
+                        # 4. 日付要素の直後の兄弟要素にリンクがあるパターン
+                        #    (日付とタイトルが別々の div/p として並ぶレイアウト。省庁サイト等に多い)
+                        if not link_tag:
+                            sibling = element.find_next_sibling()
+                            hops = 0
+                            while sibling is not None and hops < 3:
+                                sib_text = unicodedata.normalize("NFKC", sibling.get_text(" ", strip=True))
+                                # 兄弟に別の日付があれば次の行に入ったとみなして打ち切り
+                                if DATE_FLEX_FINDALL_RE.search(sib_text):
+                                    break
+                                cand = sibling if (sibling.name == "a" and sibling.has_attr("href")) else sibling.find("a", href=True)
+                                if cand is not None:
+                                    cand_text = cand.get_text(strip=True)
+                                    if len(cand_text) > 4 and cand_text not in SIBLING_LINK_IGNORE:
+                                        link_tag = cand
+                                        break
+                                sibling = sibling.find_next_sibling()
+                                hops += 1
+
+                        if not link_tag:
+                            debug_logs.append("  (date matched but no link found nearby)")
+
                         if link_tag and link_tag.get("href"):
                             title = link_tag.get_text(strip=True)
                             url = urljoin(company["url"], link_tag["href"])
@@ -313,7 +524,8 @@ class NewsScraper:
                                     else:
                                         title = "ニュース詳細"
 
-                            if url not in processed_urls:
+                            dedup_key = (url, found_date_str, title)
+                            if dedup_key not in processed_keys:
                                 all_items.append({
                                     "company_name": company["name"],
                                     "badge_color": company["badge_color"],
@@ -323,10 +535,27 @@ class NewsScraper:
                                     "is_link_only": False,
                                     "is_error": False
                                 })
-                                processed_urls.add(url)
+                                processed_keys.add(dedup_key)
                                 found_count += 1
                                 debug_logs.append(f"  -> Found: {title[:15]}...")
                                 # あえて break しない（同じ日に複数ニュースがある場合のため）
+
+            # --- フィード(RSS/Atom)フォールバック ---
+            # HTML からの抽出が0件だった場合、設定済みの rss_url またはページが
+            # <head> で宣言しているフィードを自動発見して読む。サイトの見た目
+            # (HTML 構造)が変わってもフィードは安定しているため、自己修復として機能する
+            if found_count == 0:
+                for feed_url in self._feed_candidates(company, soup):
+                    feed_items = self._fetch_feed_items(company, feed_url, start_date_str, end_date_str, debug_logs)
+                    if feed_items:
+                        all_items.extend(feed_items)
+                        found_count += len(feed_items)
+                        debug_logs.append(f"  -> Feed fallback: {len(feed_items)} items from {feed_url}")
+                        break
+
+            # 解析ツリーを明示的に解放する。BeautifulSoup のツリーは循環参照を
+            # 含むため、放置すると GC が回るまでメモリに残り続ける
+            soup.decompose()
 
             if found_count == 0:
                 # 0件の原因切り分け用: HTML 自体に日付らしき文字列があるかを見る。
